@@ -103,3 +103,22 @@ def test_V03_V01_型違いや必須項目の欠落は422(payload):
     res = client.post("/carts/c1/items", json=payload)
 
     assert res.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"product_id": "p1", "quantity": 100},
+        {"product_id": "p1", "quantity": "2"},
+        {},
+    ],
+)
+def test_X04_422のエラー本文はcodeとmessageだけ(payload):
+    client = TestClient(create_app())
+
+    res = client.post("/carts/c1/items", json=payload)
+
+    assert res.status_code == 422
+    body = res.json()
+    assert set(body.keys()) == {"error"}
+    assert set(body["error"].keys()) == {"code", "message"}
