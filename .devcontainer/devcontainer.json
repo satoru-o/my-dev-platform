@@ -1,0 +1,30 @@
+// M0: devcontainer 内でも、ホストの Claude Code 履歴を見られるようにする最小構成
+{
+  "name": "claude-history-m0",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:22",
+  "remoteUser": "node",
+
+  "features": {
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
+  },
+
+  // ホスト側に ~/.claude が無いとマウントに失敗するので、先に作っておく
+  "initializeCommand": "mkdir -p ${HOME}/.claude",
+
+  "mounts": [
+    // 履歴、設定、認証情報をホストと共有する
+    "source=${localEnv:HOME}/.claude,target=/home/node/.claude,type=bind",
+    // plugins だけはコンテナ専用にする（絶対パスが壊れるのを防ぐため）
+    "source=claude-plugins-${devcontainerId},target=/home/node/.claude/plugins,type=volume"
+  ]
+
+  // --- 履歴が見えない場合の次の手 ---
+  // 履歴はプロジェクトのパスごとに整理されている可能性があります。
+  // ホストとコンテナで作業フォルダのパスが違うと、別プロジェクト扱いになるかもしれません。
+  // その場合は、下の2行を有効にして、パスをホストと同じにして試します（macOS / Linux 向け）。
+  //
+  // "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind",
+  // "workspaceFolder": "${localWorkspaceFolder}"
+  //
+  // Windows の場合は ${localEnv:HOME} を ${localEnv:USERPROFILE} に読み替えてください。
+}
