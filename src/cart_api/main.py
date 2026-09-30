@@ -36,7 +36,10 @@ def create_app() -> FastAPI:
         items = carts.setdefault(cart_id, [])
         for item in items:
             if item["product_id"] == body.product_id:
-                item["quantity"] += body.quantity
+                total = item["quantity"] + body.quantity
+                if total > MAX_QUANTITY:
+                    raise ApiError(422, "quantity_exceeded", "quantity exceeds the limit")
+                item["quantity"] = total
                 break
         else:
             items.append({"product_id": body.product_id, "quantity": body.quantity})
