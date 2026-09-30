@@ -5,7 +5,7 @@ AI駆動の軽量フロー（TDD × スペック駆動）。目的は「作る �
 
 ## 人間の仕事は2つだけ
 1. **具体例を出す**（入力と期待される出力）
-2. **選ぶ**（AIの質問の選択肢。test-planの迷いどころも質問として questions.md に集約する）
+2. **選ぶ**（AIの質問の選択肢。test-planの迷いどころも質問として discussion-log.md に集約する）
 
 期待値の出所は、必ず人間の例。AIが実装やテストから期待値を逆算してはいけない。
 
@@ -15,16 +15,19 @@ AI駆動の軽量フロー（TDD × スペック駆動）。目的は「作る �
 specs/
   README.md              このファイル
   _catalog/viewpoints.md テスト観点カタログ
-  _templates/            req / questions / test-plan の雛形
+  _templates/            req / status / discussion-log / test-plan の雛形
   NNNN-slug/             4桁連番 + slug（例: 0001-cart-add-item）
-    req.md               要望。frontmatterに status / size / risk
-    questions.md         AIの質問と人間の回答（Round制）
+    req.md               要求事項だけ（やりたいこと、AC、やらないこと、制約）。人間が書く
+    status.md            status / size / risk と「いま」（止まり位置）、結果。AIが更新する
+    discussion-log.md    AIと人間のやりとり（質問のRound、FB）。両方が積む
     test-plan.md         S1以上のみ
 ```
 
 - 採番: 既存の最大NNNN + 1。欠番は埋めない。
-- フィードバックは別ファイルにせず、`req.md` に `## FB 1`、`## FB 2` と積む。
-- 質問が増えたら、ファイルを分けず `questions.md` に Round を積む。
+- フィードバックは別ファイルにせず、`discussion-log.md` に `## FB 1`、`## FB 2` と積む。
+- 質問が増えたら、ファイルを分けず `discussion-log.md` に Round を積む。
+- 質問やFBで決まったことは、`req.md` の制約・ACに反映する（req.md が常に「いまの要求」の正本）。
+- `discussion-log.md` は最初の質問が出たときに作る。`/req-new` は req.md と status.md だけを作る。
 
 ## サイズ（AIが提案し、人間が確認する）
 
@@ -39,7 +42,7 @@ specs/
 - セキュリティ観点（X-01〜X-04）を **必須（適用しないは不可）** にする
 - サイズを1段上げる（S0→S1、S1→S2）
 
-## status（コマンドはこれを見て次の動きを決める）
+## status（各要望の `status.md` にある。コマンドはこれを見て次の動きを決める）
 
 ```
 draft → clarifying → planned → red → green → done
@@ -47,7 +50,7 @@ draft → clarifying → planned → red → green → done
 
 | status | 意味 | 次の動き |
 | --- | --- | --- |
-| draft | req.mdを書いた直後 | `/req-run`: 曖昧ならquestions.mdを書いて `clarifying` へ。明確なら次へ |
+| draft | req.mdを書いた直後 | `/req-run`: 曖昧ならdiscussion-log.mdを書いて `clarifying` へ。明確なら次へ |
 | clarifying | 質問待ち | 人間が回答（答えなければ推奨で進む）→ 再度 `/req-run` |
 | planned | test-plan承認済み（S0は受け入れ条件確定） | テストを1件ずつ Red |
 | red | 失敗するテストが1件ある | 最小の実装で Green |
@@ -60,8 +63,8 @@ S0は `planned` を「受け入れ条件の確定」で代替する。test-plan�
 
 - 1件ずつ **Red → Green → Refactor**。テストコードを一括生成しない。
 - Redと認めるのは **assertionでの失敗のみ**。`ImportError` / `ModuleNotFoundError` / `SyntaxError` / 収集エラーでの失敗は不合格（先にスタブを作って、assertionで落とす）。
-- 実装フェーズでは `tests/` を書き換えない。テストを直す必要が出たら止まって `questions.md` で人間に聞く。
-- 既存テストの変更が必要なときも、勝手に直さず `questions.md` で聞く。
+- 実装フェーズでは `tests/` を書き換えない。テストを直す必要が出たら止まって `discussion-log.md` で人間に聞く。
+- 既存テストの変更が必要なときも、勝手に直さず `discussion-log.md` で聞く。
 - バグを見つけたら、直す前にテストを足す。そのバグの種類を `_catalog/viewpoints.md` に観点として足す。
 - 時刻と乱数は外から渡す（引数・依存注入）。外部依存はモックにする。
 - テスト実行は `make test` の1発。
