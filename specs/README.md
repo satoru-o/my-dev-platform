@@ -80,7 +80,8 @@ S0は `planned` を「受け入れ条件の確定」で代替する。test-plan�
 
 - 1件ずつ **Red → Green → Refactor**。テストコードを一括生成しない。
 - Redと認めるのは **assertionでの失敗のみ**。`ImportError` / `ModuleNotFoundError` / `SyntaxError` / 収集エラーでの失敗は不合格（先にスタブを作って、assertionで落とす）。
-- 実装フェーズでは `tests/` を書き換えない。テストを直す必要が出たら止まって `discussion-log.md` で人間に聞く。
+- テストファイルは、Redのコミットの前に `ruff format` を済ませる（`uv run ruff format tests`）。整形も含め、実装フェーズでは `tests/` を一切書き換えない。
+- テストを直す必要が出たら止まって `discussion-log.md` で人間に聞く。
 - 既存テストの変更が必要なときも、勝手に直さず `discussion-log.md` で聞く。
 - バグを見つけたら、直す前にテストを足す。そのバグの種類を `_catalog/viewpoints.md` に観点として足す。
 - 時刻と乱数は外から渡す（引数・依存注入）。外部依存はモックにする。
