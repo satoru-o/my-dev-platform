@@ -15,7 +15,12 @@ def create_app() -> FastAPI:
     @app.post("/carts/{cart_id}/items", status_code=201)
     def add_item(cart_id: str, body: AddItemRequest) -> dict:
         items = carts.setdefault(cart_id, [])
-        items.append({"product_id": body.product_id, "quantity": body.quantity})
+        for item in items:
+            if item["product_id"] == body.product_id:
+                item["quantity"] += body.quantity
+                break
+        else:
+            items.append({"product_id": body.product_id, "quantity": body.quantity})
         return {"cart_id": cart_id, "items": items}
 
     return app
