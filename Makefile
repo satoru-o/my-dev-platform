@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck audit secrets
+.PHONY: test check lint typecheck audit secrets mutate
 
 # テストはこの1発（tests/ と、hookのテスト .claude/hooks/）。0件のときは何もしない（pytestのexit 5を成功扱いにする）
 test:
@@ -19,6 +19,11 @@ audit:
 # 誤検出は、その行に `# pragma: allowlist secret` を付けて許可する
 secrets:
 	git ls-files -z | xargs -0 uv run detect-secrets-hook  # pragma: allowlist secret
+
+# 実験用: mutation testing（常設しない。機能がdoneになったあとに1回。結果の読み方は docs/experiments/mutation-0001.md）
+mutate:
+	uv run mutmut run
+	uv run mutmut results
 
 # 機械チェック一式
 check: lint typecheck test audit secrets
