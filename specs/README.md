@@ -97,9 +97,23 @@ S0は `planned` を「受け入れ条件の確定」で代替する。test-plan�
 
 Red、Green、機械チェックは自動。
 
-## AIが編集してはいけないもの（hook/CODEOWNERSが入るまでは規約）
+## AIが編集してはいけないもの
 `CLAUDE.md`、`.claude/**`、`.github/**`、`specs/README.md`、`specs/_catalog/**`。
 変更が必要と思ったら、編集せずに人間へ提案する。ただし「バグで観点を足す」場合の `_catalog/` への追記は、提案の形で人間の承認を得てから行う。
+
+## hookによる強制（`.claude/settings.json`、`.claude/hooks/guard.py`）
+ツール呼び出しの前（PreToolUse）に、次を機械で止める。テストは `.claude/hooks/test_guard.py`（`make test` に含まれる）。
+
+| 対象 | 通す条件 | 通らないとき |
+| --- | --- | --- |
+| 保護対象（上の一覧） | `.claude/UNLOCK` がある | 人間に提案する。承認するなら、人間が `! touch .claude/UNLOCK` を実行し、編集後に `! rm .claude/UNLOCK` |
+| `src/` | 進行中のreq（status が planned / red / green）がある | `/req-new`、`/req-run`、`/req-fb` で進める |
+| `tests/` | 進行中のreq（planned / green）があり、red のreqが無い | red のときは実装フェーズなので触らない。直す必要があれば discussion-log.md で聞く |
+
+- 保護対象の編集は「拒否（deny）」で止める。auto モードでは「確認（ask）」が効かないため。
+- UNLOCK は `.gitignore` 済み。保護対象なので、AIは作れない。
+- 限界: Bash は「書き込みに見えるコマンド」だけを見るベストエフォート。`status.md` を書き換えれば通るので、悪意ではなく**うっかり**を止める道具。本当の壁は CODEOWNERS / ブランチ保護（M2）で作る。
+- まだ無いもの: 探索モード（使い捨ての試作）の抜け道。必要になったら足す。
 
 ## やらないこと
 監査用の記録、重い承認プロセス、大きな仕様書、最初から全部作り込むこと。

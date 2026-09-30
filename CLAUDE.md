@@ -24,5 +24,7 @@
 - Redは assertion での失敗だけ。`ImportError` などは不合格。テストは1件ずつ書く。
 - 実装フェーズでは `tests/` を書き換えない。直す必要があれば `discussion-log.md` で聞く。
 - 編集してよいのは、人間が明示的に指示したときだけ: `CLAUDE.md`、`.claude/**`、`.github/**`、`specs/README.md`、`specs/_catalog/**`。それ以外のときは、提案するだけにする。
+- これらはhook（`.claude/hooks/guard.py`）でも止まる。人間が `.claude/UNLOCK` を置くまで編集できない。拒否されたら、回避せず、人間にUNLOCKを頼む。
+- `src/` と `tests/` も、進行中のreq（status.md が planned / red / green）が無ければhookが止める。`tests/` は red の間も止まる。拒否されたら、回避せず、`/req-new` などで進める。
 - AIの回答は、`discussion-log.md` に書く（チャットは要約）。
 - gitは、`main` に直接コミットせず、ブランチで作業する。コミットは細かく。pushは頼まれたときだけ。
