@@ -19,12 +19,13 @@ specs/
   NNNN-slug/             4桁連番 + slug（例: 0001-cart-add-item）
     req.md               要求事項だけ（やりたいこと、AC、やらないこと、制約）。人間が書く
     status.md            status / size / risk と「いま」（止まり位置）、結果。AIが更新する
-    discussion-log.md    AIと人間のやりとり（質問のRound、FB）。両方が積む
+    discussion-log.md    AIと人間のやりとり（質問のRound、FB、AIの回答）。両方が積む
     test-plan.md         S1以上のみ
 ```
 
 - 採番: 既存の最大NNNN + 1。欠番は埋めない。
 - フィードバックは別ファイルにせず、`discussion-log.md` に `## FB 1`、`## FB 2` と積む。
+- AIは、質問への回答やFBに対応したら、その直後に `### AI回答（FB n）`（質問なら `### AI回答（Round n）`）を `discussion-log.md` に書く。内容は「対応した内容」「変更したファイル・コミット」「提案にとどめたこと」「直さなかったことと理由」。チャットの説明は要約にして、正本はログに置く。
 - 質問が増えたら、ファイルを分けず `discussion-log.md` に Round を積む。
 - 質問やFBで決まったことは、`req.md` の制約・ACに反映する（req.md が常に「いまの要求」の正本）。
 - `discussion-log.md` は最初の質問が出たときに作る。`/req-new` は req.md と status.md だけを作る。
