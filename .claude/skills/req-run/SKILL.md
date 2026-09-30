@@ -9,16 +9,25 @@ argument-hint: <id>
 ルールの正本は `specs/README.md`。迷ったらそれに従う。
 
 ## 0. 準備
-1. `specs/$ARGUMENTS-*/status.md` と `req.md` を読む（無ければ止まる）。`status.md` の frontmatter の `status` / `size` / `risk` を確認する。`discussion-log.md` があれば読む。
+1. `specs/$ARGUMENTS-*/status.md` と `req.md` を読む（無ければ止まる）。`status.md` の frontmatter の `kind`（未指定は `feature`）/ `status` / `size` / `risk` を確認する。`discussion-log.md` があれば読む。
+   - `kind` が `chore` / `refactor` なら、下の「## 1a. chore / refactor の流れ」に従う（テストは書かない）。`feature` は「## 1」。
    - 以降の「`status: X` にする」「size/risk を更新」は、すべて `status.md` に対する操作。止まるたびに `status.md` の「いま」も更新する（何を人間に求めているか、1〜3行）。
 2. **既存テストを全部実行する**: `make test`。ただしテストが0件（`tests/` に `test_*.py` が無い）ならスキップしてそう報告する。
    - 失敗があれば、そこで止まって報告する。直さない。
 3. 既存テストの変更が必要になったら、勝手に直さず `discussion-log.md` に質問として書いて止まる。
 
-## 1. status別の動き
+## 1a. chore / refactor の流れ（`kind` が chore / refactor のとき。テストは書かない）
+1. 受け入れ条件（「既存テストが全件通る」と、人間が挙げた確認項目）が明確か確認する。`⚠️ 未回答` や曖昧な項目があれば、`discussion-log.md` に質問を書いて `status: clarifying` にして止まる。
+2. **依存の追加・更新**なら、req.md の「根拠」欄を確認する。URLが無ければ、調べて書く（取得した情報は要約なので、人間の確認が必要と明記する）。**人間の確認チェック `[ ]` が未チェックなら、依存を入れずに G1 として止まる**（「根拠を確認して `[x]` にしてください」）。
+3. 明確で、チェックも済んでいれば `status: planned` にし、作業をする。`chore` は `src/` と `tests/` を触らない。`refactor` は `src/` だけを変え、`tests/` は触らない（既存テストが守る）。
+4. 確認項目を実行して、結果を確かめる: `make check`（既存テスト全件を含む）と、req.md に挙げられた項目。**検出する・止める道具**は、検出すべきサンプルで実際に検出することも確かめる。
+5. 通ったら `status: green` にして、結果（何を変えたか、確認した項目と結果、気づき）を `status.md` の「結果」に下書きし、**G3（done）で止まる**。`done` にするのは人間の確認後。失敗したら止まって報告する（直す場合も、`tests/` は触らない）。
+6. 保護対象（`CLAUDE.md`、`.claude/**`、`.github/**`、`specs/README.md`、`specs/_catalog/**`）の変更は、人間が req に書いた、または明示的に指示したときだけ行う。
+
+## 1. status別の動き（`kind: feature`）
 
 ### draft
-1. req.md が「明確」か判断する。明確の条件: すべてのACに、人間が書いた具体例が2つ以上ある／「やらないこと」が書かれている／用語の解釈が一意。
+1. req.md が「明確」か判断する。明確の条件: すべてのACに、人間の具体例（`[人]` か `[案→承認]`）が2つ以上ある／`⚠️ 未回答` が残っていない／「やらないこと」が書かれている／用語の解釈が一意。`⚠️ 未回答` が1つでもあれば曖昧とみなし、推奨では埋めない。
 2. **曖昧なら**: `specs/_templates/discussion-log.md` を元に `discussion-log.md` を作り（あれば新しい Round を積み）、`status: clarifying` にして **止まる**。
    - 1ラウンド最大5問。各質問は「シナリオ + 選択肢 + 推奨 + 推奨の理由」。
    - 質問は、具体例が足りないACと、カタログ観点から浮かぶ仕様の穴に絞る。
