@@ -17,7 +17,7 @@
 ## コマンド
 - `make test`: テスト（0件でも成功）
 - `make check`: lint、型、テスト、脆弱性（pip-audit）、秘密情報（detect-secrets）
-- `/req-new <slug>`: 要望の雛形を作る。`/req-run <id>`: 次の一手を進める
+- `/req-new <slug>`: 要望の雛形を作る。`/req-run <id>`: 次の一手を進める。`/req-fb <id>`: 未対応のFBに対応して、AI回答を書く
 
 ## 守ること
 - 期待値の出所は、人間が書いた例だけ。実装やテストから逆算しない。
