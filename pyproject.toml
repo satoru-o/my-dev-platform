@@ -16,6 +16,7 @@ dev = [
     "pyright",
     "pip-audit>=2.10.1",
     "detect-secrets>=1.5.0",
+    "mutmut>=3.8.0",
 ]
 
 [tool.pytest.ini_options]
@@ -36,3 +37,8 @@ select = ["E", "F", "I", "B", "S"]
 [tool.pyright]
 include = ["src", "tests"]
 typeCheckingMode = "standard"
+
+[tool.mutmut]
+# 実験用。mutation testing は常設せず、1機能に1回だけ回す（docs/experiments/ に結果を残す）
+source_paths = ["src/"]
+pytest_add_cli_args_test_selection = ["tests/"]
