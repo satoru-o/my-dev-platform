@@ -1,6 +1,7 @@
 ---
 id: NNNN
 slug: SLUG
+kind: feature # feature | chore | refactor（/req-new の最初の質問で決まる。振る舞いが変わらないなら chore か refactor）
 status: draft # draft | clarifying | planned | red | green | done
 size: S1 # S0 | S1 | S2（AIが提案、人間が確認）
 risk: [] # お金 | 個人情報 | 認証 | データ削除（付いたらX-01〜X-04必須、サイズ+1）
