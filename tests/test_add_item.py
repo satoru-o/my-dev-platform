@@ -13,3 +13,19 @@ def test_AC1_初回追加でカート全体が返る():
         "cart_id": "c1",
         "items": [{"product_id": "p1", "quantity": 2}],
     }
+
+
+def test_AC1_続けて別商品を追加すると追加順に並ぶ():
+    client = TestClient(create_app())
+    client.post("/carts/c1/items", json={"product_id": "p1", "quantity": 2})
+
+    res = client.post("/carts/c1/items", json={"product_id": "p2", "quantity": 1})
+
+    assert res.status_code == 201
+    assert res.json() == {
+        "cart_id": "c1",
+        "items": [
+            {"product_id": "p1", "quantity": 2},
+            {"product_id": "p2", "quantity": 1},
+        ],
+    }
