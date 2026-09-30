@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck
+.PHONY: test check lint typecheck audit secrets
 
 # テストはこの1発。テストが0件のときは何もしない（pytestのexit 5を成功扱いにする）
 test:
@@ -11,5 +11,14 @@ lint:
 typecheck:
 	uv run pyright
 
-# 機械チェック一式（pip-audit、秘密情報スキャンは次段階で追加）
-check: lint typecheck test
+# 依存の既知の脆弱性を調べる（PyPIの脆弱性DBに問い合わせるため、ネットワークが要る）
+audit:
+	uv run pip-audit --progress-spinner off
+
+# gitで管理しているファイルに、秘密情報（鍵・トークン・パスワード等）が無いか調べる
+# 誤検出は、その行に `# pragma: allowlist secret` を付けて許可する
+secrets:
+	git ls-files -z | xargs -0 uv run detect-secrets-hook  # pragma: allowlist secret
+
+# 機械チェック一式
+check: lint typecheck test audit secrets
