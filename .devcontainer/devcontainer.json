@@ -11,6 +11,12 @@
   // ホスト側に ~/.claude が無いとマウントに失敗するので、先に作っておく
   "initializeCommand": "mkdir -p ${HOME}/.claude",
 
+  // Python先行: uv を公式インストーラで入れ、依存を同期する（pyproject.toml がある場合のみ）
+  "postCreateCommand": "curl -LsSf https://astral.sh/uv/install.sh | sh && ${HOME}/.local/bin/uv sync",
+  "remoteEnv": {
+    "PATH": "${containerEnv:PATH}:/home/node/.local/bin"
+  },
+
   "mounts": [
     // 履歴、設定、認証情報をホストと共有する
     "source=${localEnv:HOME}/.claude,target=/home/node/.claude,type=bind",
