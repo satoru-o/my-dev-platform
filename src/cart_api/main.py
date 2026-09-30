@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -27,6 +28,13 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=exc.status_code,
             content={"error": {"code": exc.code, "message": exc.message}},
+        )
+
+    @app.exception_handler(RequestValidationError)
+    def handle_validation_error(_: Request, __: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": "invalid_request", "message": "invalid request"}},
         )
 
     @app.post("/carts/{cart_id}/items", status_code=201)
