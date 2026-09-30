@@ -1,11 +1,3 @@
----
-id: 0001
-slug: cart-add-item
-status: clarifying # draft | clarifying | planned | red | green | done
-size: S1 # AI暫定・要確認
-risk: [] # 価格計算は範囲外のため、リスクタグなし（AI暫定・要確認）
----
-
 # 0001 cart-add-item
 
 ## やりたいこと
@@ -43,6 +35,3 @@ risk: [] # 価格計算は範囲外のため、リスクタグなし（AI暫定�
 - （Round 1 回答）数量は1〜99の整数のみ。範囲外・型違いは422。合算後に99を超える場合も422
 - （Round 1 回答）レスポンスはカート全体 `{"cart_id", "items": [{"product_id", "quantity"}]}`、itemsは追加順
 - （Round 1 回答）エラーは `{"error": {"code", "message"}}` に統一し、内部情報を出さない
-
-## 結果
-<!-- done時に記入 -->
