@@ -8,7 +8,7 @@ MAX_QUANTITY = 99
 
 class AddItemRequest(BaseModel):
     product_id: str
-    quantity: int = Field(ge=1, le=MAX_QUANTITY)
+    quantity: int = Field(strict=True, ge=1, le=MAX_QUANTITY)
 
 
 class ApiError(Exception):
