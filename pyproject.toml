@@ -11,7 +11,7 @@ dependencies = [
 dev = [
     "pytest",
     "hypothesis",
-    "httpx",  # FastAPI TestClient 用
+    "httpx2",  # FastAPI TestClient 用（Starletteがhttpxではなくhttpx2を案内）
     "ruff",
     "pyright",
 ]
