@@ -29,3 +29,16 @@ def test_AC1_続けて別商品を追加すると追加順に並ぶ():
             {"product_id": "p2", "quantity": 1},
         ],
     }
+
+
+def test_AC2_同じ商品を追加すると数量が加算される():
+    client = TestClient(create_app())
+    client.post("/carts/c1/items", json={"product_id": "p1", "quantity": 2})
+
+    res = client.post("/carts/c1/items", json={"product_id": "p1", "quantity": 3})
+
+    assert res.status_code == 201
+    assert res.json() == {
+        "cart_id": "c1",
+        "items": [{"product_id": "p1", "quantity": 5}],
+    }
