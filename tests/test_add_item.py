@@ -42,3 +42,14 @@ def test_AC2_同じ商品を追加すると数量が加算される():
         "cart_id": "c1",
         "items": [{"product_id": "p1", "quantity": 5}],
     }
+
+
+def test_S01_存在しない商品は404でエラー形式が統一される():
+    client = TestClient(create_app())
+
+    res = client.post("/carts/c1/items", json={"product_id": "p999", "quantity": 1})
+
+    assert res.status_code == 404
+    body = res.json()
+    assert set(body.keys()) == {"error"}
+    assert set(body["error"].keys()) == {"code", "message"}
