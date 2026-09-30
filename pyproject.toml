@@ -11,9 +11,11 @@ dependencies = [
 dev = [
     "pytest",
     "hypothesis",
-    "httpx",  # FastAPI TestClient 用
+    "httpx2",  # FastAPI TestClient 用（Starletteがhttpxではなくhttpx2を案内）
     "ruff",
     "pyright",
+    "pip-audit>=2.10.1",
+    "detect-secrets>=1.5.0",
 ]
 
 [tool.pytest.ini_options]
