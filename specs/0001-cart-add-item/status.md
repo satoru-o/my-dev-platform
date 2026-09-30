@@ -1,7 +1,7 @@
 ---
 id: 0001
 slug: cart-add-item
-status: green # draft | clarifying | planned | red | green | done
+status: done # draft | clarifying | planned | red | green | done
 size: S1 # AI暫定・要確認
 risk: [] # 価格計算は範囲外のため、リスクタグなし（AI暫定・要確認）
 ---
@@ -9,10 +9,10 @@ risk: [] # 価格計算は範囲外のため、リスクタグなし（AI暫定�
 # 0001 cart-add-item の状態
 
 ## いま
-G3待ち。下の「結果（AI下書き）」を見て、よければ done にしてください。
+done（G3で人間が確認済み）。変更は /req-fb（FB）で。
 
 ## 結果
-（AI下書き。done時に人間が確認して確定）
+（done時に人間が確認して確定）
 - 実装: `src/cart_api/main.py`（FastAPI、メモリ上のカート、商品マスタ p1〜p3、数量1〜99）
 - テスト: `tests/test_add_item.py` 16件（parametrize含む）。`make check`（ruff・pyright・pytest）通過
 - Red/Greenの流れ: 8件の計画のうち、Redを確認してGreenにしたのは7件。残り1件（AC-1 別商品の追加順）は、1件目の実装が先に満たしていて一度もRedにならなかった
