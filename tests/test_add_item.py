@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from cart_api.main import create_app
@@ -53,3 +54,21 @@ def test_S01_存在しない商品は404でエラー形式が統一される():
     body = res.json()
     assert set(body.keys()) == {"error"}
     assert set(body["error"].keys()) == {"code", "message"}
+
+
+@pytest.mark.parametrize("quantity", [0, -1, 100])
+def test_V02_数量が範囲外なら422(quantity):
+    client = TestClient(create_app())
+
+    res = client.post("/carts/c1/items", json={"product_id": "p1", "quantity": quantity})
+
+    assert res.status_code == 422
+
+
+def test_V02_数量99ちょうどは追加できる():
+    client = TestClient(create_app())
+
+    res = client.post("/carts/c1/items", json={"product_id": "p1", "quantity": 99})
+
+    assert res.status_code == 201
+    assert res.json()["items"] == [{"product_id": "p1", "quantity": 99}]
