@@ -72,3 +72,17 @@ def test_V02_数量99ちょうどは追加できる():
 
     assert res.status_code == 201
     assert res.json()["items"] == [{"product_id": "p1", "quantity": 99}]
+
+
+def test_V02_合算が99を超えたら422でカートは変わらない():
+    client = TestClient(create_app())
+    client.post("/carts/c1/items", json={"product_id": "p1", "quantity": 50})
+
+    res = client.post("/carts/c1/items", json={"product_id": "p1", "quantity": 50})
+    after = client.post("/carts/c1/items", json={"product_id": "p2", "quantity": 1})
+
+    assert res.status_code == 422
+    assert after.json()["items"] == [
+        {"product_id": "p1", "quantity": 50},
+        {"product_id": "p2", "quantity": 1},
+    ]
