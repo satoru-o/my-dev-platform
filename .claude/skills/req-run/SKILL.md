@@ -41,11 +41,11 @@ argument-hint: <id>
 
 ### planned → red → green（1件ずつ）
 1. test-plan（S0はAC）から**次の1件だけ**選ぶ。複数件を一括生成しない。
-2. **Red**: そのテストを `tests/` に書き、`make test` で実行する。
+2. **Red**: そのテストを `tests/` に書き、`uv run ruff format tests` で整形してから、`make test` で実行する（整形はRedのコミット前に済ませる。以降 `tests/` は一切触らない）。
    - 合格のRed = **assertionでの失敗**（`AssertionError`）。
    - `ImportError` / `ModuleNotFoundError` / `SyntaxError` / 収集エラー / fixture未定義 での失敗は **不合格**。先に最小のスタブ（関数の骨組みだけ、戻り値は誤った値）を `src/` に作り、assertionで落ちるようにする。
    - Redを確認したら `status: red`。
-3. **Green**: テストを通す**最小の実装**を `src/` に書く。この間 `tests/` は編集しない。テストが間違っていると思ったら、編集せず `discussion-log.md` に書いて止まる。
+3. **Green**: テストを通す**最小の実装**を `src/` に書く。この間 `tests/` は編集しない（整形も含む）。テストが間違っていると思ったら、編集せず `discussion-log.md` に書いて止まる。
    - 期待値をテストや実装から逆算して変えない。
    - `make test` が全件通れば `status: green`。
 4. **Refactor**: 重複除去など。テストは変えない。`make test` が緑のまま。
