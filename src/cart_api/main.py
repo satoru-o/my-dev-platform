@@ -1,13 +1,14 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 PRODUCTS = {"p1", "p2", "p3"}
+MAX_QUANTITY = 99
 
 
 class AddItemRequest(BaseModel):
     product_id: str
-    quantity: int
+    quantity: int = Field(ge=1, le=MAX_QUANTITY)
 
 
 class ApiError(Exception):
