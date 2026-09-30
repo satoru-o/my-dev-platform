@@ -60,7 +60,9 @@ def test_S01_存在しない商品は404でエラー形式が統一される():
 def test_V02_数量が範囲外なら422(quantity):
     client = TestClient(create_app())
 
-    res = client.post("/carts/c1/items", json={"product_id": "p1", "quantity": quantity})
+    res = client.post(
+        "/carts/c1/items", json={"product_id": "p1", "quantity": quantity}
+    )
 
     assert res.status_code == 422
 
