@@ -1,8 +1,8 @@
 .PHONY: test check lint typecheck audit secrets
 
-# テストはこの1発。テストが0件のときは何もしない（pytestのexit 5を成功扱いにする）
+# テストはこの1発（tests/ と、hookのテスト .claude/hooks/）。0件のときは何もしない（pytestのexit 5を成功扱いにする）
 test:
-	uv run pytest -q || [ $$? -eq 5 ]
+	uv run pytest -q tests .claude/hooks || [ $$? -eq 5 ]
 
 lint:
 	uv run ruff check .

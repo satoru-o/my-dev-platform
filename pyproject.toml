@@ -19,7 +19,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", ".claude/hooks"]
 pythonpath = ["src"]
 
 [tool.ruff]
@@ -31,6 +31,7 @@ select = ["E", "F", "I", "B", "S"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101"]  # テストでのassertは許可
+".claude/hooks/**" = ["E501", "S101", "S603"]  # hookのガードとそのテスト（長い正規表現、assert、subprocess）
 
 [tool.pyright]
 include = ["src", "tests"]
