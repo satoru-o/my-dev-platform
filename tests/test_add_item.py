@@ -86,3 +86,20 @@ def test_V02_合算が99を超えたら422でカートは変わらない():
         {"product_id": "p1", "quantity": 50},
         {"product_id": "p2", "quantity": 1},
     ]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"product_id": "p1", "quantity": "2"},
+        {"quantity": 2},
+        {"product_id": "p1"},
+        {},
+    ],
+)
+def test_V03_V01_型違いや必須項目の欠落は422(payload):
+    client = TestClient(create_app())
+
+    res = client.post("/carts/c1/items", json=payload)
+
+    assert res.status_code == 422
