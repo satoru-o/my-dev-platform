@@ -74,6 +74,26 @@ def test_AC4_守りの仕組み自体のファイルを変えると赤():
         assert [f.category for f in report.findings] == ["guard"]
 
 
+def test_AC5_テストの検出は承認ラベルがあれば緑で承認した内容が出る():
+    change = core.FileChange(
+        path="tests/test_a.py",
+        base_src="def test_a():\n    assert add(2, 3) == 5\n",
+        head_src="def test_a():\n    assert add(2, 3) == 6\n",
+    )
+
+    report = core.check(
+        changes=[change],
+        base_ids=frozenset(),
+        head_ids=frozenset(),
+        labels=frozenset({"test-change-approved"}),
+    )
+
+    assert report.verdict == "green"
+    assert report.findings == []
+    assert [f.path for f in report.approved] == ["tests/test_a.py"]
+    assert report.approved[0].reason
+
+
 def test_AC1_pytestの設定を変えると赤():
     change = core.FileChange(
         path="pyproject.toml",
