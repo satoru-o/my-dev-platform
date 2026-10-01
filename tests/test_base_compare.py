@@ -241,6 +241,31 @@ def test_AC2_知らない形の理由は比較できないとして承認ラベ�
     assert [f.kind for f in report.findings] == ["比較できない"]
 
 
+def test_O01_拒否側に倒す理由はすべて種別が決まっている():
+    import ast
+    from pathlib import Path
+
+    guardlib = Path(core.__file__).resolve().parents[2] / ".claude/hooks/guardlib"
+    found = set()
+    for name in ("pyrules.py", "reqrules.py", "compare.py"):
+        tree = ast.parse((guardlib / name).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if "拒否側に倒した" in node.value:
+                    found.add(node.value)
+
+    syntax = "解析しきれない（構文エラーなど）ため、拒否側に倒した"
+    big_append = "（足すだけの追記ではない）ため、拒否側に倒した"
+    big_block = "（既存のブロックの中への追記）ため、拒否側に倒した"
+    assert found == {syntax, big_append, big_block}
+    mark = "既存のテストを変える・弱める・消す変更です（"
+    assert core._kind_of(f"{mark}{syntax}）") == "検出"
+    for tail in (big_append, big_block):
+        assert core._kind_of(f"{mark}大きすぎて、AST では解析しきれない{tail}）") == (
+            "比較できない"
+        )
+
+
 def test_AC1_pytestの設定を変えると赤():
     change = core.FileChange(
         path="pyproject.toml",
