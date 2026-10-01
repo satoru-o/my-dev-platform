@@ -2,7 +2,7 @@
 id: 0009
 slug: sandbox-feasibility-record
 kind: chore # feature | chore | refactor（/req-new の最初の質問で決まる。振る舞いが変わらないなら chore か refactor）
-status: green # draft | clarifying | planned | red | green | done
+status: done # draft | clarifying | planned | red | green | done
 size: S0 # 暫定・要確認（kind: chore は S0）
 risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除のいずれにも該当しない）
 ---
@@ -10,7 +10,7 @@ risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除
 # 0009 sandbox-feasibility-record の状態
 
 ## いま
-green。G3 待ち: `docs/experiments/sandbox-feasibility.md` を読み、req の `[ ]`（出典URLと要点の確認）を `[x]` にして、done にしてよいか返してください。
+done。G3 確認済み。次は最小 CI（`/req-new minimal-ci`）。
 
 ## 結果
 - `docs/experiments/sandbox-feasibility.md` を書いた（bwrap と弱いモードの結果、公式ドキュメントの要点と出典URL、hook の誤認2件、結論と代替 B）。
