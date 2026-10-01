@@ -2,7 +2,7 @@
 id: 0010
 slug: minimal-ci
 kind: chore # feature | chore | refactor（/req-new の最初の質問で決まる。振る舞いが変わらないなら chore か refactor）
-status: green # draft | clarifying | planned | red | green | done
+status: done # draft | clarifying | planned | red | green | done
 size: S0 # 暫定・要確認（kind: chore は S0）
 risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除のいずれにも該当しない。ただし CI は、シークレットを持たせない）
 ---
@@ -10,7 +10,7 @@ risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除
 # 0010 minimal-ci の状態
 
 ## いま
-green。G3 待ち: `done` にして main にマージしてよいか返してください。
+done。G3 確認済み。次は段階1（guard.py の分割。`/req-new` で起こす。UNLOCK が要る）。
 
 ## 結果
 - `.github/workflows/check.yml` を足した。push 時に `uv sync --locked` と `make check` を実行する。権限は `contents: read` のみ。外部の action 2つ（checkout v6.1.0、setup-uv v10.2.0）は、コミットSHAで固定。
