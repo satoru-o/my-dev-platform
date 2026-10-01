@@ -1,4 +1,5 @@
-# push時に `make check` を回すだけ。検査の中身は Makefile に置く（ここに書かない）。
+# push と pull_request で `make check` を回す。検査の中身は Makefile に置く（ここに書かない）。
+# pull_request のときは、`origin/main` と比べる検査（src/base_compare）も動かす（0013）。
 # 外部の action は、コミットSHAで固定する（コメントはタグ）。
 name: check
 
@@ -17,8 +18,58 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          fetch-depth: 0 # あとで origin/main との比較を足すため、履歴を全部取る
+          fetch-depth: 0 # make check の中の比較（警告だけ）が、origin/main を使うため
           persist-credentials: false
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - run: uv sync --locked
       - run: make check
+
+  unlabel:
+    # 新しいコミットが載ったら、承認ラベルを外す。外す権限は、この job だけに与える。
+    # PR のコードは取得せず、実行しない。
+    if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: 承認ラベルを外す
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          for label in test-change-approved guard-change-approved; do
+            gh api --method DELETE "repos/$REPO/issues/$PR/labels/$label" || true
+          done
+
+  compare:
+    # origin/main と比べる検査。承認ラベルは、実行時に API で読み直す（イベントの写しは使わない）。
+    # synchronize（新しいコミット）のときは、残っているラベルは古い承認なので、無いものとして扱う。
+    needs: [unlabel]
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: uv sync --locked
+      - name: origin/main と比べる
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          ACTION: ${{ github.event.action }}
+        run: |
+          if [ "$ACTION" = "synchronize" ]; then
+            LABELS=""
+          else
+            LABELS=$(gh api "repos/$REPO/issues/$PR/labels" --jq '[.[].name] | join(",")')
+          fi
+          PYTHONPATH=src uv run python -m base_compare --base origin/main --mode ci --labels "$LABELS" | tee -a "$GITHUB_STEP_SUMMARY"
