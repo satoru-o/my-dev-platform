@@ -181,3 +181,15 @@ def test_AC4_合算が99を1でも超えたら422でカートは変わらない(
         {"product_id": "p1", "quantity": 99},
         {"product_id": "p2", "quantity": 1},
     ]
+
+
+def test_AC5_商品p3も追加できる():
+    client = TestClient(create_app())
+
+    res = client.post("/carts/c1/items", json={"product_id": "p3", "quantity": 1})
+
+    assert res.status_code == 201
+    assert res.json() == {
+        "cart_id": "c1",
+        "items": [{"product_id": "p3", "quantity": 1}],
+    }
