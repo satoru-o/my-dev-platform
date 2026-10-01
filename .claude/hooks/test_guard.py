@@ -264,6 +264,41 @@ def test_catのheredocは本文の行頭が書き込み風でも通す(tmp_path)
     assert bash(root, command) is None
 
 
+# 退行の網（S-02、V-03、V-01）: 追加した時点で通る。誤検出を直しても、拒否すべきものが通らないことを守る
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat > specs/x.md <<'EOF'\nhello\nEOF\ncat > CLAUDE.md <<'EOF'\nx\nEOF",
+        "python3 - <<'EOF'\nopen('specs/a.md','w').write('x')\nopen('CLAUDE.md','w').write('y')\nEOF",
+    ],
+)
+def test_書き込みが2つあり片方が保護対象なら拒否する(tmp_path, command):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, command) is not None
+
+
+def test_日本語と絵文字の本文でも判定は変わらない(tmp_path):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    cat_doc = "cat > specs/x.md <<'EOF'\n日本語の文章 🍎\ntouch .claude/x\nEOF"
+    py_doc = (
+        "python3 - <<'EOF'\n"
+        "p='specs/a.md'\n"
+        "open(p,'w').write('日本語 🍎 `touch .claude/x`')\n"
+        "EOF"
+    )
+    assert bash(root, cat_doc) is None
+    assert bash(root, py_doc) is None
+    assert bash(root, "bash <<'EOF'\n日本語 🍎\ntouch .claude/x\nEOF") is not None
+
+
+def test_commandが空や無いときは今までどおり通す(tmp_path):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, "") is None
+    assert guard.decide("Bash", {}, root) is None
+
+
 # --- 実際のスクリプトを標準入力で動かす -----------------------------------------
 
 
