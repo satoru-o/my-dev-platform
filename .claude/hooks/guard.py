@@ -57,7 +57,7 @@ PATH_RE = {
     "switch": r"ALLOW_TEST_CHANGE",
 }
 WRITE_VERB = (
-    r"(?:^|[;&|(]\s*|\bxargs\s+|\bsudo\s+)"
+    r"(?:^|[;&|(`]\s*|\bxargs\s+|\bsudo\s+)"
     r"(?:sed\s[^;&|\n]*-\w*i|tee|mv|cp|rm|touch|truncate|ln|chmod|chown|install|rsync|dd|patch)\b"
 )
 
@@ -211,6 +211,32 @@ def head_content(root: Path, rel: str) -> str | None:
     return blob.stdout.decode("utf-8", "replace")
 
 
+_head_paths_cache: dict[Path, frozenset[str] | None] = {}
+
+
+def head_paths(root: Path) -> frozenset[str] | None:
+    """HEAD にあるファイルの一覧。コミットが0件なら None。git の失敗は GitError。
+
+    1回の判定（decide）の中では、1回だけ取る（書き込み先が多くても、git を何度も呼ばない）。
+    """
+    if root in _head_paths_cache:
+        return _head_paths_cache[root]
+    has_head = _git(root, "rev-parse", "--verify", "--quiet", "HEAD")
+    if has_head.returncode == 1 and not has_head.stdout.strip():
+        _head_paths_cache[root] = None
+        return None
+    if has_head.returncode != 0:
+        raise GitError("git rev-parse が失敗した（リポジトリではない、など）")
+    listing = _git(root, "ls-tree", "-r", "-z", "--name-only", "HEAD")
+    if listing.returncode != 0:
+        raise GitError("git ls-tree が失敗した")
+    paths = frozenset(
+        p.decode("utf-8", "replace") for p in listing.stdout.split(b"\0") if p
+    )
+    _head_paths_cache[root] = paths
+    return paths
+
+
 def _assigned_names(node: ast.stmt) -> list[str]:
     targets = node.targets if isinstance(node, ast.Assign) else [node.target]  # type: ignore[attr-defined]
     return [t.id for t in targets if isinstance(t, ast.Name)]
@@ -313,10 +339,42 @@ def _compare_def(base: ast.stmt, new: ast.stmt) -> str | None:
     return None
 
 
+# 大きなファイルは、AST の解析だけで数秒かかる（2.7MB で、parse だけで1.7秒。hook のタイムアウトは10秒）。
+# 合計がこの文字数を超えるものは、足すだけの追記（元の内容で始まり、末尾に足す）に限って、AST を使わず、
+# 正規表現で調べる（skip / xfail の語、HEAD と同名の定義）。それ以外は、解析しきれないものとして拒否する。
+BIG_FILE_LIMIT = 600_000
+_TOP_NAME_RE = re.compile(
+    r"^(?:async[ \t]+def|def|class)[ \t]+(\w+)|^(\w+)[ \t]*(?::[^=\n]*)?=(?!=)",
+    re.MULTILINE,
+)
+_SKIP_WORD_RE = re.compile(r"\b(?:skip|skipif|xfail)\b")
+_FIRST_LINE_INDENT_RE = re.compile(r"^([ \t]*)\S", re.MULTILINE)
+
+
+def _big_file_reason(base_src: str, new_src: str) -> str | None:
+    why_big = "大きすぎて、AST では解析しきれない"
+    if not new_src.startswith(base_src) or not base_src.endswith("\n"):
+        return f"{why_big}（足すだけの追記ではない）ため、拒否側に倒した"
+    tail = new_src[len(base_src) :]
+    first = _FIRST_LINE_INDENT_RE.search(tail)
+    if first and first.group(1):
+        return f"{why_big}（既存のブロックの中への追記）ため、拒否側に倒した"
+    if _SKIP_WORD_RE.search(tail):
+        return "skip / xfail を足す変更"
+    base_names = {m.group(1) or m.group(2) for m in _TOP_NAME_RE.finditer(base_src)}
+    for m in _TOP_NAME_RE.finditer(tail):
+        name = m.group(1) or m.group(2)
+        if name in base_names:
+            return f"`{name}` と同名の定義が、HEAD より増えた（あとの定義が、前を上書きする）"
+    return None
+
+
 def python_change_reason(base_src: str | None, new_src: str) -> str | None:
     """テストファイルの、HEAD からの変更が「足すだけ」でなければ、その理由。足すだけなら None。"""
     if base_src is None or base_src == new_src:
         return None  # 新規、または変更なし
+    if len(base_src) + len(new_src) > BIG_FILE_LIMIT:
+        return _big_file_reason(base_src, new_src)
     try:
         base, new = _Model(base_src), _Model(new_src)
     except (SyntaxError, ValueError, RecursionError):
@@ -351,8 +409,11 @@ def _new_content(tool_name: str, tool_input: dict, path: Path) -> str | None:
     if not isinstance(old, str) or not isinstance(new, str) or not old:
         return None
     try:
-        current = path.read_text(encoding="utf-8")
-    except OSError:
+        with path.open(
+            encoding="utf-8", newline=""
+        ) as f:  # 改行（CRLF など）を、そのまま読む
+            current = f.read()
+    except (OSError, UnicodeDecodeError):
         return None
     if old not in current:
         return None  # Edit 自体が失敗する
@@ -720,11 +781,20 @@ _REDIRECT_RE = re.compile(r"""(?<![<&])>{1,2}[ \t]*["']?([^\s"';&|<>]+)""")
 _VERB_ARGS_RE = re.compile(rf"{WRITE_VERB}([^;&|\n]*)", re.MULTILINE)
 
 
+MAX_SHELL_TARGET_TEXT = 200_000
+MAX_TARGETS = 100
+# 書き込み先を決められないときの印（`*` を含むので、決められない書き込み先として、拒否側に倒される）
+UNRESOLVED_TARGET = "tests/*（大きすぎる・多すぎる・cd のあとの相対パス）"
+_CD_TESTS_RE = re.compile(r"\b(?:cd|pushd)[ \t]+[\"']?(?:\./)?tests\b")
+
+
 def _shell_targets(text: str) -> list[str]:
     """シェルのコマンドが書き込む（と判断できる）パスの文字列。リダイレクトの先、書き込み系のコマンドの引数。"""
     if not any(w in text for w in _GUARDED_WORDS):
         return []  # 守る対象に関係しない（巨大な入力で、無駄に調べない）
-    targets = [m.group(1) for m in _REDIRECT_RE.finditer(text)]
+    if len(text) > MAX_SHELL_TARGET_TEXT:
+        return [UNRESOLVED_TARGET]  # 大きすぎて、書き込み先を数えきれない
+    found = [m.group(1) for m in _REDIRECT_RE.finditer(text)]
     for m in _VERB_ARGS_RE.finditer(text):
         try:
             words = shlex.split(m.group(1))
@@ -732,16 +802,23 @@ def _shell_targets(text: str) -> list[str]:
             words = m.group(1).split()
         for w in words:
             if not w.startswith("-"):
-                targets.append(w[3:] if w.startswith("of=") else w)
+                found.append(w[3:] if w.startswith("of=") else w)
+    # `$(sed -i … file)` や バッククォートの終わりの `)` ` を除き、重複を除く
+    targets = list(dict.fromkeys(t.strip().strip("\"'").rstrip(")`;") for t in found))
+    if len(targets) > MAX_TARGETS:
+        return [UNRESOLVED_TARGET]
+    if targets and _CD_TESTS_RE.search(text):
+        targets.append(UNRESOLVED_TARGET)  # `cd tests` のあとの相対パスは、決められない
     return targets
 
 
 def _exists_in_baseline(root: Path, rel: str) -> bool:
     """「既存」か。HEAD にあれば既存。git が使えないときは、ディスクにあれば既存とみなす（安全側）。"""
     try:
-        return head_content(root, rel) is not None
+        paths = head_paths(root)
     except GitError:
         return (root / rel).exists()
+    return paths is not None and rel in paths
 
 
 _UNRESOLVED_TEST_RE = re.compile(
@@ -1045,6 +1122,7 @@ def _bash_scan(command: str, root: Path) -> tuple[list[str], list[str], str]:
 
 def decide(tool_name: str, tool_input: dict, root: Path) -> str | None:
     """拒否する理由。通してよければ None。"""
+    _head_paths_cache.clear()
     if tool_name in WRITE_TOOLS:
         path = tool_input.get(WRITE_TOOLS[tool_name])
         if not path:
