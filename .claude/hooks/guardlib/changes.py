@@ -2,24 +2,15 @@
 
 from pathlib import Path
 
+from guardlib.compare import change_reason_for, compare_kind
 from guardlib.gitbase import GitError, head_content
 from guardlib.paths import SWITCH, active_req_dirs
-from guardlib.pyrules import (
-    PYTEST_CONFIG_FILES,
-    conftest_config_reason,
-    pytest_config_reason,
-    python_change_reason,
-)
-from guardlib.reqrules import _REQ_RE, req_change_reason
+from guardlib.reqrules import _REQ_RE
 
 CHANGE_HINT = (
     "足すのは自由です。承認する場合は、人間が `! touch .claude/ALLOW_TEST_CHANGE` を実行します"
     "（1回使うと消えます。承認した変更は、すぐコミットしてください）。"
 )
-
-
-def _is_test_py(rel: str) -> bool:
-    return (rel.startswith("tests/") and rel.endswith(".py")) or rel == "conftest.py"
 
 
 def _new_content(tool_name: str, tool_input: dict, path: Path) -> str | None:
@@ -47,11 +38,12 @@ def _new_content(tool_name: str, tool_input: dict, path: Path) -> str | None:
 
 
 def _guarded_kind(rel: str, root: Path) -> str | None:
-    if _is_test_py(rel) or rel.endswith("/conftest.py"):
-        return "test"
-    if rel in PYTEST_CONFIG_FILES:
-        return "pytest_config"
-    m = _REQ_RE.fullmatch(rel)
+    kind = compare_kind(rel)
+    if kind != "req":
+        return kind
+    m = _REQ_RE.fullmatch(
+        rel
+    )  # 実装中（planned / red / green）の req.md だけが、守る対象
     if m and m.group(1) in active_req_dirs(root):
         return "req"
     return None
@@ -73,21 +65,10 @@ def change_reason(
         return (
             f"「既存」の基準（HEAD）が取れないため、拒否しました（{e}）。{CHANGE_HINT}"
         )
-    if kind == "test":
-        why = python_change_reason(base_src, new_src)
-        if why is None and rel.endswith("conftest.py"):
-            why = conftest_config_reason(base_src, new_src)
-        label = "既存のテスト"
-    elif kind == "pytest_config":
-        why, label = pytest_config_reason(rel, base_src, new_src), "pytest の設定"
-    else:
-        why, label = (
-            req_change_reason(base_src, new_src),
-            "実装中の req.md の受け入れ条件",
-        )
+    why = change_reason_for(rel, base_src, new_src)
     if why is None:
         return None
-    return f"{label}を変える・弱める・消す変更です（{why}）。{CHANGE_HINT}"
+    return f"{why}。{CHANGE_HINT}"
 
 
 def _use_switch(root: Path) -> bool:
