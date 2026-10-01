@@ -41,3 +41,14 @@ def test_AC2_CIでは基準が取れなければツール自身の失敗で失�
 
     assert code == 1
     assert "ツール自身の失敗" in text
+
+
+def test_AC6_ローカルで基準が取れなくても警告だけで成功_比較できなかったと表示(
+    tmp_path,
+):
+    red_repo(tmp_path)
+
+    code, text = cli.run(tmp_path, "origin/main", frozenset(), "local", no_ids)
+
+    assert code == 0
+    assert "比較できなかった" in text
