@@ -7,6 +7,19 @@
 2. src/ への書き込みは、進行中のreq（status が planned / red / green）が無ければ拒否する。
 3. tests/ への書き込みは、進行中のreqが無い、または status が red のものがあれば拒否する
    （red = 失敗するテストがあり、実装中。実装フェーズでは tests/ を触らない）。
+4. 既存のテスト（tests/ の既存の Python ファイル、conftest.py）、pytest の設定（pyproject.toml の
+   `[tool.pytest]`、pytest.ini、tox.ini、setup.cfg）、実装中の req.md の AC の表は、「足すのは自由、
+   変える・弱める・消すは拒否」（0007）。「既存」の基準は、最後にコミットした内容（HEAD）。
+   - テスト: ASTで HEAD と比べる。assert・期待値・本文の文・デコレータが消える、変わる、同名の定義が
+     増える、skip / xfail が増える、構文エラーになる、は拒否。parametrize の値を足すのは通す。
+   - Bash 経由の、既存のファイルへの書き込みは拒否（まだ無いファイルは通す）。追記は Edit を使う。
+   - git: HEAD を動かす・書き換える操作（amend、rebase、reset --hard、reset <コミット>）は常に拒否。
+     守る対象を戻す・消す操作（checkout --、restore、rm、mv）は、そのパスに触れるときだけ拒否。
+   - 解除: 人間が `! touch .claude/ALLOW_TEST_CHANGE` を置く。AI は作れない（UNLOCK があっても）。
+     スイッチが無ければ拒否される変更を通したときだけ、1回で消える。履歴を動かす操作は通せない。
+   - HEAD が取れないとき: コミット0件ならすべて新規。git の失敗・タイムアウトは拒否。git は、作業
+     フォルダを固定し、GIT_ で始まる環境変数を掃除して呼ぶ。
+   - 大きなファイル（合計60万文字超）は、足すだけの追記に限って、正規表現で調べる（AST は遅い）。
 
 Bash は、書き込みに見えるコマンドだけを見る「ベストエフォート」。完全な防御ではない。
   - heredoc: 受け取るのがデータだけ（cat、tee など）なら、本文は調べない（引用符なしなら、展開される
