@@ -8,4 +8,6 @@ class ToolError(Exception):
 def parse_name_status(out: bytes) -> list[tuple[str, str]]:
     """`git diff --name-status -z` の出力を、（状態, パス）の一覧にする。"""
     tokens = [t.decode("utf-8", "replace") for t in out.split(b"\0") if t != b""]
-    return list(zip(tokens[0::2], tokens[1::2], strict=False))
+    if len(tokens) % 2:
+        raise ToolError("git diff の出力が、（状態, パス）の組になっていない")
+    return list(zip(tokens[0::2], tokens[1::2], strict=True))
