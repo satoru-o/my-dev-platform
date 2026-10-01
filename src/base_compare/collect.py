@@ -2,4 +2,7 @@
 
 
 def parse_ids(out: str) -> frozenset[str]:
-    return frozenset()  # スタブ（Red 用。わざと誤った値）
+    """`pytest --collect-only -q` の出力から、テストID の集合を作る（重複は1つ）。"""
+    return frozenset(
+        line for line in out.split("\n") if "::" in line and not line.startswith(" ")
+    )
