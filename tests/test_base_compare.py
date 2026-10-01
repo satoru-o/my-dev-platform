@@ -49,6 +49,31 @@ def test_AC1_テストを足しただけなら緑():
     assert report.findings == []
 
 
+def test_AC4_守りの仕組み自体のファイルを変えると赤():
+    guarded = [
+        ".github/workflows/check.yml",
+        ".claude/hooks/guard.py",
+        "tools/guard-equiv/run.py",
+        "Makefile",
+        "CLAUDE.md",
+        "specs/README.md",
+        "specs/_catalog/viewpoints.md",
+    ]
+
+    for path in guarded:
+        change = core.FileChange(path=path, base_src="a\n", head_src="b\n")
+        report = core.check(
+            changes=[change],
+            base_ids=frozenset(),
+            head_ids=frozenset(),
+            labels=frozenset(),
+        )
+
+        assert report.verdict == "red", path
+        assert [f.path for f in report.findings] == [path]
+        assert [f.category for f in report.findings] == ["guard"]
+
+
 def test_AC1_pytestの設定を変えると赤():
     change = core.FileChange(
         path="pyproject.toml",
