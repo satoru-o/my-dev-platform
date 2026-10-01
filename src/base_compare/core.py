@@ -15,6 +15,17 @@ if str(_HOOKS) not in sys.path:
 
 from guardlib.compare import change_reason_for  # noqa: E402
 
+# 守りの仕組み自体（これらの変更は、テストの変更とは別に、承認が要る）
+GUARD_PATHS = (
+    ".github/",
+    ".claude/",
+    "tools/guard-equiv/",
+    "Makefile",
+    "CLAUDE.md",
+    "specs/README.md",
+    "specs/_catalog/",
+)
+
 
 @dataclass(frozen=True)
 class FileChange:
@@ -27,6 +38,7 @@ class FileChange:
 class Finding:
     path: str
     reason: str
+    category: str = "test"  # "test"（テストの変更）か "guard"（守りの仕組み自体）
 
 
 @dataclass
@@ -35,9 +47,22 @@ class Report:
     findings: list[Finding] = field(default_factory=list)
 
 
+def _is_guard_path(path: str) -> bool:
+    return any(path == g or path.startswith(g) for g in GUARD_PATHS)
+
+
 def check(changes, base_ids, head_ids, labels) -> Report:
     findings = []
     for change in changes:
+        if _is_guard_path(change.path):
+            findings.append(
+                Finding(
+                    path=change.path,
+                    reason="守りの仕組み自体のファイルが、変わった",
+                    category="guard",
+                )
+            )
+            continue
         if change.base_src is None or change.head_src is None:
             continue
         reason = change_reason_for(change.path, change.base_src, change.head_src)
