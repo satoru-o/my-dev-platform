@@ -1,7 +1,7 @@
 ---
 id: 0001
 slug: cart-add-item
-status: green # draft | clarifying | planned | red | green | done
+status: done # draft | clarifying | planned | red | green | done
 size: S1 # AI暫定・要確認
 risk: [] # 価格計算は範囲外のため、リスクタグなし（AI暫定・要確認）
 ---
@@ -9,7 +9,7 @@ risk: [] # 価格計算は範囲外のため、リスクタグなし（AI暫定�
 # 0001 cart-add-item の状態
 
 ## いま
-G3待ち。FB 2（mutation 実験で見つかったテストの穴、エラーの code の契約）に対応し、green。下の「結果」の FB 2 の項目と、`tests/test_add_item.py` の差分を見て、よければ done にしてください。
+done（G3で人間が確認済み）。FB 2 に対応済み。変更は /req-fb（FB）で。
 
 ## 結果
 （done時に人間が確認して確定）
