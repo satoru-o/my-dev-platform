@@ -24,3 +24,23 @@ def test_S03_同じコードを2回収集して同じなら_そのIDの集合を
 
     assert collect.stable_ids(collect_once) == frozenset({"tests/test_a.py::test_a"})
     assert len(calls) == 2
+
+
+def test_S03_同じコードで2回の収集が食い違ったらツール自身の失敗():
+    from base_compare import gitio
+
+    results = iter(
+        [
+            frozenset({"tests/test_a.py::test_a"}),
+            frozenset({"tests/test_a.py::test_a", "tests/test_a.py::test_b"}),
+        ]
+    )
+
+    try:
+        collect.stable_ids(lambda: next(results))
+    except gitio.ToolError:
+        raised = True
+    else:
+        raised = False
+
+    assert raised
