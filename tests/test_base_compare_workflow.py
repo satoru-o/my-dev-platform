@@ -76,6 +76,15 @@ def test_AC6_makeにcompareがあり_make_checkに含まれ_警告だけのモ�
     assert "compare" in check.group(1).split()
 
 
+def test_AC6_比較のjobは_パイプの先のteeに終了コードを隠されない():
+    found = jobs(workflow_text())
+    assert "compare" in found
+    compare = found["compare"]
+
+    assert "| tee" in compare
+    assert re.search(r"set -[a-z]*o pipefail|shell: bash", compare)
+
+
 def test_X03_runの中にPRのタイトルやブランチ名を直接埋め込まない():
     run_lines = [
         line
