@@ -193,3 +193,42 @@ def test_AC5_商品p3も追加できる():
         "cart_id": "c1",
         "items": [{"product_id": "p3", "quantity": 1}],
     }
+
+
+def test_Q12_存在しない商品のcodeはproduct_not_found():
+    client = TestClient(create_app())
+
+    res = client.post("/carts/c1/items", json={"product_id": "p999", "quantity": 1})
+
+    assert res.status_code == 404
+    assert res.json()["error"]["code"] == "product_not_found"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"product_id": "p1", "quantity": 0},
+        {"product_id": "p1", "quantity": -1},
+        {"product_id": "p1", "quantity": 100},
+        {"product_id": "p1", "quantity": "2"},
+        {"quantity": 2},
+        {},
+    ],
+)
+def test_Q12_数量の範囲外や型違いや欠落のcodeはinvalid_request(payload):
+    client = TestClient(create_app())
+
+    res = client.post("/carts/c1/items", json=payload)
+
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "invalid_request"
+
+
+def test_Q12_合算が99を超えるときのcodeはquantity_exceeded():
+    client = TestClient(create_app())
+    client.post("/carts/c1/items", json={"product_id": "p1", "quantity": 99})
+
+    res = client.post("/carts/c1/items", json={"product_id": "p1", "quantity": 1})
+
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "quantity_exceeded"
