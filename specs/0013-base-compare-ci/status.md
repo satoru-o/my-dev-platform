@@ -2,7 +2,7 @@
 id: 0013
 slug: base-compare-ci
 kind: feature # feature | chore | refactor（/req-new の最初の質問で決まる。振る舞いが変わらないなら chore か refactor）
-status: green # draft | clarifying | planned | red | green | done
+status: done # draft | clarifying | planned | red | green | done
 size: S2 # 暫定・要確認（hook の検査を、CI に広げる。品質の優先順位は、セキュリティが最上位なので、S2（カタログの全行）を提案）
 risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除のいずれにも該当しない。ただし、守りの仕組みなので、検出できないこと・誤検出を、特に重く見る）
 ---
@@ -10,7 +10,7 @@ risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除
 # 0013 base-compare-ci の状態
 
 ## いま
-green。GitHub 上の動作確認も済んだ（下の「GitHub 上で確認したこと」）。G3 待ち: done にしてよいか返してください。気づき2（構文エラーは CI では承認で通せない）の扱いも、判断してください。UNLOCK は、外してかまいません。
+done。G3 確認済み。PR は、人間が GitHub の画面でマージする（新しいコミットで承認ラベルが外れるので、マージ前に `guard-change-approved` を付け直す）。次は、`gh` の導入と `settings.json` の `permissions`（別の小さな req）、段階4（permissions.deny、tools/guard-equiv の保護）。
 
 ## 結果
 
