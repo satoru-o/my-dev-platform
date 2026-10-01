@@ -56,7 +56,7 @@ def _is_guard_path(path: str) -> bool:
     return any(path == g or path.startswith(g) for g in GUARD_PATHS)
 
 
-def check(changes, base_ids, head_ids, labels) -> Report:
+def check(changes, base_ids, head_ids, labels, tool_errors=()) -> Report:
     findings = []
     for change in changes:
         if _is_guard_path(change.path):

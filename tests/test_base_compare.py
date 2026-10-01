@@ -150,6 +150,19 @@ def test_AC4_テストでも守りの仕組みでもないファイルの変更�
     assert report.findings == []
 
 
+def test_AC2_ツール自身の失敗は承認ラベルがあっても赤():
+    report = core.check(
+        changes=[],
+        base_ids=frozenset(),
+        head_ids=frozenset(),
+        labels=frozenset({"test-change-approved", "guard-change-approved"}),
+        tool_errors=["テストの収集が時間内に終わらない"],
+    )
+
+    assert report.verdict == "red"
+    assert report.errors == ["テストの収集が時間内に終わらない"]
+
+
 def test_AC1_pytestの設定を変えると赤():
     change = core.FileChange(
         path="pyproject.toml",
