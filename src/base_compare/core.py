@@ -50,6 +50,9 @@ class Report:
     verdict: str  # "green" か "red"
     findings: list[Finding] = field(default_factory=list)  # 通っていない検出
     approved: list[Finding] = field(default_factory=list)  # 承認ラベルで通した検出
+    errors: list[str] = field(
+        default_factory=list
+    )  # ツール自身の失敗（承認でも通さない）
 
 
 def _is_guard_path(path: str) -> bool:
@@ -78,7 +81,8 @@ def check(changes, base_ids, head_ids, labels, tool_errors=()) -> Report:
     approved = [f for f in findings if LABEL_FOR[f.category] in labels]
     remaining = [f for f in findings if f not in approved]
     return Report(
-        verdict="red" if remaining else "green",
+        verdict="red" if remaining or tool_errors else "green",
         findings=remaining,
         approved=approved,
+        errors=list(tool_errors),
     )
