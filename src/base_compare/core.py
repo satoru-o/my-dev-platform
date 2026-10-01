@@ -3,6 +3,13 @@
 from dataclasses import dataclass, field
 
 
+@dataclass(frozen=True)
+class FileChange:
+    path: str  # リポジトリの相対パス（posix）
+    base_src: str | None  # 基準（origin/main）の内容。無ければ None（新規）
+    head_src: str | None  # いまの内容。無ければ None（削除）
+
+
 @dataclass
 class Report:
     verdict: str  # "green" か "red"
