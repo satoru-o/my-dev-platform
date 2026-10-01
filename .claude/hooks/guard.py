@@ -124,6 +124,7 @@ class Heredoc:
 
     receiver: str  # `<<` を含む1行。受け取るコマンドの判定に使う
     pos: int  # receiver の中の `<<` の位置
+    quoted: bool  # 区切り語が引用符（`'EOF'`、`"EOF"`、`\EOF`）つき。本文は展開されない
     body: str
 
 
@@ -151,7 +152,14 @@ def split_heredocs(command: str) -> tuple[str, list[Heredoc]]:
                 if (cur.lstrip("\t") if dash else cur) == delim:
                     break
                 body.append(cur)
-            docs.append(Heredoc(receiver=line, pos=m.start(), body="\n".join(body)))
+            quoted = (
+                m.group(2) is not None or m.group(3) is not None or bool(m.group(4))
+            )
+            docs.append(
+                Heredoc(
+                    receiver=line, pos=m.start(), quoted=quoted, body="\n".join(body)
+                )
+            )
     return "\n".join(shell), docs
 
 
@@ -194,6 +202,54 @@ def receives_data_only(doc: Heredoc) -> bool:
     """
     commands = _segment(doc.receiver, doc.pos).split("|")
     return all(_is_data_command(c) for c in commands)
+
+
+MAX_SUBSTITUTION_DEPTH = 10
+
+
+def expansions(body: str) -> tuple[list[str], bool]:
+    """引用符なしの heredoc の本文のうち、展開されて実行される部分（`$(…)` とバッククォート）。
+
+    戻り値は、その中身の一覧と、解析しきれたかどうか。閉じていない、入れ子が深すぎるものは、
+    解析しきれなかったものとして扱う（呼び出し側が、拒否側に倒す）。
+    """
+    units: list[str] = []
+    i, n = 0, len(body)
+    while i < n:
+        c = body[i]
+        if c == "\\":
+            i += 2
+        elif body.startswith("$(", i):
+            arithmetic = body.startswith("$((", i)
+            depth, j = 1, i + 2
+            while j < n and depth > 0:
+                ch = body[j]
+                if ch == "\\":
+                    j += 2
+                    continue
+                if ch == "(":
+                    depth += 1
+                    if depth > MAX_SUBSTITUTION_DEPTH:
+                        return units, False
+                elif ch == ")":
+                    depth -= 1
+                j += 1
+            if depth != 0:
+                return units, False
+            if not arithmetic:
+                units.append(body[i + 2 : j - 1])
+            i = j
+        elif c == "`":
+            j = i + 1
+            while j < n and body[j] != "`":
+                j += 2 if body[j] == "\\" else 1
+            if j >= n:
+                return units, False
+            units.append(body[i + 1 : j])
+            i = j + 1
+        else:
+            i += 1
+    return units, True
 
 
 # --- Bash: python の書き込み先の判定 -------------------------------------------
@@ -284,6 +340,12 @@ def bash_kinds(command: str, root: Path) -> list[str]:
             kinds |= python_kinds(d.body, root)  # python の本文は、書き込み先で判定する
         elif not receives_data_only(d):
             shell += "\n" + d.body  # 実行されうる本文は、シェルのコマンドとして調べる
+        elif not d.quoted:
+            units, parsed = expansions(d.body)  # データでも、展開される部分は実行される
+            for unit in units:
+                kinds |= set(_legacy_kinds(unit))
+            if not parsed:
+                kinds.add("protected")  # 解析しきれないものは、拒否側に倒す
     kinds |= set(_legacy_kinds(shell))
     return [k for k in PATH_RE if k in kinds]
 
