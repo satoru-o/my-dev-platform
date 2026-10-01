@@ -211,6 +211,34 @@ def test_Bashのsrc書き込みは進行中のreqが無ければ拒否する(tmp
     assert bash(root, "cat src/cart_api/main.py") is None
 
 
+# --- 0004: heredoc と変数経由の書き込み（誤検出の修正） -----------------------------
+# 退行の網: 今の実装でも通るもの。誤検出を直す途中で、拒否すべきものが通らないようにする。
+
+
+def test_変数経由で保護対象を開いて書くのは拒否する(tmp_path):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    command = "python3 - <<'EOF'\np='CLAUDE.md'\nopen(p,'w').write('x')\nEOF"
+    assert bash(root, command) is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "bash <<'EOF'\ntouch .claude/x\nEOF",
+        "cat <<'EOF' | bash\ntouch .claude/x\nEOF",
+    ],
+)
+def test_インタプリタに渡したheredocの本文は拒否する(tmp_path, command):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, command) is not None
+
+
+def test_変数経由で保護対象でない所に書くのは通す(tmp_path):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    command = "python3 - <<'EOF'\np='specs/a.md'\nopen(p,'w').write('x')\nEOF"
+    assert bash(root, command) is None
+
+
 # --- 実際のスクリプトを標準入力で動かす -----------------------------------------
 
 
