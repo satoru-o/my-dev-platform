@@ -32,3 +32,12 @@ def test_AC6_ローカルでは検出があっても警告だけで成功の終�
     assert code == 0
     assert "警告" in text
     assert "tests/test_a.py" in text
+
+
+def test_AC2_CIでは基準が取れなければツール自身の失敗で失敗の終了コード(tmp_path):
+    red_repo(tmp_path)
+
+    code, text = cli.run(tmp_path, "origin/main", frozenset(), "ci", no_ids)
+
+    assert code == 1
+    assert "ツール自身の失敗" in text
