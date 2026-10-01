@@ -43,4 +43,6 @@ def check(changes, base_ids, head_ids, labels) -> Report:
         reason = change_reason_for(change.path, change.base_src, change.head_src)
         if reason:
             findings.append(Finding(path=change.path, reason=reason))
+    for lost in sorted(base_ids - head_ids):
+        findings.append(Finding(path=lost, reason="基準にあったテストIDが、無くなった"))
     return Report(verdict="red" if findings else "green", findings=findings)
