@@ -22,7 +22,7 @@ def stable_ids(collect_once) -> frozenset[str]:
 
 
 def collect_in(directory, timeout: float = 300.0) -> frozenset[str]:
-    """ディレクトリで `pytest --collect-only` を実行し、テストID の集合を返す（テストは実行しない）。"""
+    """`pytest --collect-only` で収集し、IDの集合を返す。"""
     done = subprocess.run(  # noqa: S603
         [
             sys.executable,
