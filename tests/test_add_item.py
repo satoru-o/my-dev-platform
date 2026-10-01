@@ -150,3 +150,34 @@ def test_AC3_別のカートの同じ商品の数量は合算されない():
         "cart_id": "c2",
         "items": [{"product_id": "p1", "quantity": 3}],
     }
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (98, 1),
+        (50, 49),
+    ],
+)
+def test_AC4_合算がちょうど99なら追加できる(first, second):
+    client = TestClient(create_app())
+    client.post("/carts/c1/items", json={"product_id": "p1", "quantity": first})
+
+    res = client.post("/carts/c1/items", json={"product_id": "p1", "quantity": second})
+
+    assert res.status_code == 201
+    assert res.json()["items"] == [{"product_id": "p1", "quantity": 99}]
+
+
+def test_AC4_合算が99を1でも超えたら422でカートは変わらない():
+    client = TestClient(create_app())
+    client.post("/carts/c1/items", json={"product_id": "p1", "quantity": 99})
+
+    res = client.post("/carts/c1/items", json={"product_id": "p1", "quantity": 1})
+    after = client.post("/carts/c1/items", json={"product_id": "p2", "quantity": 1})
+
+    assert res.status_code == 422
+    assert after.json()["items"] == [
+        {"product_id": "p1", "quantity": 99},
+        {"product_id": "p2", "quantity": 1},
+    ]
