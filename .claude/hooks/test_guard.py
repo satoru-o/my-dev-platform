@@ -333,6 +333,79 @@ def test_heredocが終わったあとの行は普通のコマンドとして調�
     assert bash(root, command) is not None
 
 
+# Red 4（V-04、Q6、Q8）: 巨大な入力でも、2秒以内に判定する（hook のタイムアウトは10秒。超えると素通りになる）
+
+TIME_LIMIT_SECONDS = 2.0
+MB = 1024 * 1024
+
+SLOW_CASES = {
+    # 無害な大きな本文
+    "1MBの無害なheredoc本文": "cat > specs/x.md <<'EOF'\n"
+    + ("あ" * 99 + "\n") * (MB // 100)
+    + "EOF",
+    "1MBの無害な1行のコマンド": "echo " + "a" * MB,
+    # 最悪ケース（正規表現や走査が極端に遅くなりやすいもの）
+    "閉じていないheredocと長い本文": "cat <<'EOF'\n" + "x\n" * 500_000,
+    "小さなheredocが大量": "cat <<'EOF'\nx\nEOF\n" * 50_000,
+    "1行に<<が大量": "cat " + "<<EOF " * 100_000,
+    "openの繰り返し": 'python3 -c "' + "open(" * 200_000 + '"',
+    "書き込み風の動詞の繰り返し": "tee " * 200_000,
+    "リダイレクト記号の繰り返し": "echo " + ">" * 500_000,
+    "pythonのheredocでopen(の繰り返し": "python3 - <<'EOF'\n"
+    + "open('" * 100_000
+    + "\nEOF",
+    "$(の繰り返し（引用符なしheredoc）": "cat <<EOF\n" + "$(" * 200_000 + "\nEOF",
+    "バッククォートの繰り返し（引用符なしheredoc）": "cat <<EOF\n"
+    + "`" * 200_000
+    + "\nEOF",
+    "閉じた$(の繰り返し（引用符なしheredoc）": "cat <<EOF\n"
+    + "$(date) " * 100_000
+    + "\nEOF",
+}
+
+
+_CHILD = (
+    "import sys, time\n"
+    "from pathlib import Path\n"
+    "sys.dont_write_bytecode = True\n"
+    f"sys.path.insert(0, {str(GUARD.parent)!r})\n"
+    "import guard\n"
+    "command = sys.stdin.read()\n"
+    "start = time.perf_counter()\n"
+    "guard.decide('Bash', {'command': command}, Path(sys.argv[1]))\n"
+    "print(time.perf_counter() - start)\n"
+)
+
+
+def decide_seconds(root: Path, command: str) -> float | None:
+    """判定にかかった秒数。上限を超えたら None（別プロセスで動かし、上限で打ち切る）。
+
+    同じプロセスで動かすと、遅いケースが終わるまで待つことになり、テスト自体が何分もかかる。
+    """
+    try:
+        done = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", _CHILD, str(root)],
+            input=command,
+            capture_output=True,
+            text=True,
+            timeout=TIME_LIMIT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    return float(done.stdout)
+
+
+@pytest.mark.parametrize("name", list(SLOW_CASES))
+def test_巨大な入力でも判定は時間内に終わる(tmp_path, name):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+
+    elapsed = decide_seconds(root, SLOW_CASES[name])
+
+    assert elapsed is not None, f"{name}: {TIME_LIMIT_SECONDS}秒以内に終わらなかった"
+    assert elapsed < TIME_LIMIT_SECONDS
+
+
 # --- 実際のスクリプトを標準入力で動かす -----------------------------------------
 
 
