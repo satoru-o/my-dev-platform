@@ -79,3 +79,38 @@ def test_AC3_基準にあったテストIDが無くなったら赤():
 
     assert report.verdict == "red"
     assert [f.path for f in report.findings] == ["tests/test_a.py::test_b"]
+
+
+def test_AC3_テストを1つ消して別を1つ足しても赤():
+    report = core.check(
+        changes=[],
+        base_ids=frozenset({"tests/test_a.py::test_a", "tests/test_a.py::test_b"}),
+        head_ids=frozenset({"tests/test_a.py::test_a", "tests/test_a.py::test_c"}),
+        labels=frozenset(),
+    )
+
+    assert report.verdict == "red"
+    assert [f.path for f in report.findings] == ["tests/test_a.py::test_b"]
+
+
+def test_AC3_基準のテストが全部無くなったら赤():
+    report = core.check(
+        changes=[],
+        base_ids=frozenset({"tests/test_a.py::test_a"}),
+        head_ids=frozenset(),
+        labels=frozenset(),
+    )
+
+    assert report.verdict == "red"
+
+
+def test_AC3_テストIDが増えただけなら緑():
+    report = core.check(
+        changes=[],
+        base_ids=frozenset(),
+        head_ids=frozenset({"tests/test_a.py::test_a"}),
+        labels=frozenset(),
+    )
+
+    assert report.verdict == "green"
+    assert report.findings == []
