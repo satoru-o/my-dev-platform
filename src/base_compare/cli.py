@@ -23,5 +23,10 @@ def run(repo, base_ref, labels, mode, collect_ids):
     )
     text = report.render(result)
     if mode == "local":
-        return 0, f"警告（ローカルでは失敗にしない。承認の正本は CI のラベル）\n{text}"
+        head = "警告（ローカルでは失敗にしない。承認の正本は CI のラベル）"
+        if errors:
+            head += (
+                "\n⚠️ 比較できなかった（基準が取れない、など）。CI で確かめてください"
+            )
+        return 0, f"{head}\n{text}"
     return (0 if result.verdict == "green" else 1), text
