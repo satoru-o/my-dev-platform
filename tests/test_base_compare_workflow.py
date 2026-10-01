@@ -44,3 +44,35 @@ def test_AC5_比較のjobは_ラベルを外すjobの後に動き_pull_request�
 
     assert re.search(r"needs:\s*\[?unlabel\]?", compare)
     assert "github.event_name == 'pull_request'" in compare
+
+
+def test_AC5_ラベルは実行時にAPIで読み直し_新しいコミットのときは無いものとして扱う():
+    found = jobs(workflow_text())
+    compare = found["compare"]
+
+    assert "github.event.pull_request.labels" not in workflow_text()
+    assert re.search(r'gh api "repos/\$REPO/issues/\$PR/labels"', compare)
+    assert re.search(r'if \[ "\$ACTION" = "synchronize" \]; then\s+LABELS=""', compare)
+    assert "github.event.action == 'synchronize'" in found["unlabel"]
+
+
+def test_AC6_比較のjobは履歴を全部取る_checkoutに認証情報を残さない():
+    found = jobs(workflow_text())
+
+    for name in ("check", "compare"):
+        assert "fetch-depth: 0" in found[name], name
+        assert "persist-credentials: false" in found[name], name
+
+
+def test_X03_runの中にPRのタイトルやブランチ名を直接埋め込まない():
+    run_lines = [
+        line
+        for line in workflow_text().split("\n")
+        if "${{" in line and not line.lstrip().startswith(("#", "if:"))
+    ]
+    in_env = re.compile(r"^\s+[A-Z_]+: \$\{\{ [\w.]+ \}\}$")
+
+    for line in run_lines:
+        assert in_env.match(line), line
+    for danger in ("head_ref", "pull_request.title", "pull_request.body", "head.ref"):
+        assert danger not in workflow_text()
