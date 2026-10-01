@@ -9,6 +9,12 @@
    （red = 失敗するテストがあり、実装中。実装フェーズでは tests/ を触らない）。
 
 Bash は、書き込みに見えるコマンドだけを見る「ベストエフォート」。完全な防御ではない。
+  - heredoc: 受け取るのがデータだけ（cat、tee など）なら、本文は調べない（引用符なしなら、展開される
+    `$(…)` とバッククォートだけ調べる。解析しきれないものは拒否）。bash や python など、実行するもの
+    （知らないコマンドも含む）なら、本文を調べる。here-string（`<<<`）も同じ。
+  - python: 書き込み先は、文字列リテラルか、リテラルを代入した変数から読む。代入が見えない変数は通す。
+  - 巨大な入力で遅くならないこと（hook のタイムアウトは10秒。超えると素通りになる）が前提。
+    入力量の2乗に比例する処理を入れない（test_guard.py の SLOW_CASES で確かめる）。
 本当の壁は CODEOWNERS / ブランチ保護（M2）で作る。
 想定外の例外は、安全側（拒否）に倒す。
 """
@@ -282,10 +288,7 @@ _FUNC_RE = re.compile(
 
 
 def _path_kind(path: str, root: Path) -> str | None:
-    if posixpath.isabs(path):
-        rel = rel_path(path, root)
-    else:
-        rel = rel_path(path, root)
+    rel = rel_path(path, root)
     return kind_of(rel) if rel is not None else None
 
 
