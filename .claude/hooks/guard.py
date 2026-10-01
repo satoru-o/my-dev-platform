@@ -32,6 +32,7 @@ from pathlib import Path
 
 PROTECTED = (".claude", "CLAUDE.md", ".github", "specs/README.md", "specs/_catalog")
 UNLOCK = ".claude/UNLOCK"
+GIT_TIMEOUT_SECONDS = 5.0  # 「既存」の基準（HEAD）を取る git の、待つ時間の上限
 ACTIVE = {"planned", "red", "green"}
 WRITE_TOOLS = {
     "Edit": "file_path",

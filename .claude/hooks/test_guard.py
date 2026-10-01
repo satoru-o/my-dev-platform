@@ -480,6 +480,298 @@ def test_python以外のインタプリタでも保護パスに書かないな�
     assert bash(root, command) is None
 
 
+# --- 0007: 既存テストを黙って書き換えさせない ----------------------------------------
+# 「既存」の基準は、最後にコミットした内容（HEAD）。足すのは自由、変える・弱める・消すは拒否。
+
+BASE_TEST = """import pytest
+
+
+def test_a():
+    assert f(1) == 2
+    assert f(2) == 3
+
+
+@pytest.mark.parametrize("x", [1, 2])
+def test_b(x):
+    assert x > 0
+
+
+class TestK:
+    def test_m(self):
+        assert True
+"""
+
+
+def _git_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
+def run_git(path: Path, *args: str) -> None:
+    subprocess.run(  # noqa: S603
+        ["git", "-C", str(path), *args],  # noqa: S607
+        check=True,
+        capture_output=True,
+        env=_git_env(),
+    )
+
+
+def make_repo(
+    tmp_path: Path,
+    files: dict[str, str] | None = None,
+    statuses: dict[str, str] | None = None,
+    commit: bool = True,
+    init: bool = True,
+) -> Path:
+    """テスト用のリポジトリ。files をコミットした状態にする（commit=False ならコミット0件）。"""
+    root = make_project(tmp_path, statuses or {"0001-a": "planned"})
+    for rel, text in (files or {"tests/test_x.py": BASE_TEST}).items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+    if init:
+        run_git(root, "init", "-q")
+        run_git(root, "config", "user.email", "t@example.com")
+        run_git(root, "config", "user.name", "t")
+        if commit:
+            run_git(root, "add", "-A")
+            run_git(root, "commit", "-q", "-m", "base")
+    return root
+
+
+def change_edit(
+    root: Path, rel: str, old: str, new: str, replace_all: bool = False
+) -> str | None:
+    tool_input = {
+        "file_path": str(root / rel),
+        "old_string": old,
+        "new_string": new,
+        "replace_all": replace_all,
+    }
+    return guard.decide("Edit", tool_input, root)
+
+
+def change_write(root: Path, rel: str, content: str) -> str | None:
+    return guard.decide(
+        "Write", {"file_path": str(root / rel), "content": content}, root
+    )
+
+
+TEST_X = "tests/test_x.py"
+APPEND_AFTER = "        assert True\n"  # BASE_TEST の末尾（一意）
+
+# AC-1（足すのは自由）: 今の実装でも通る網
+
+
+def test_AC1_新しいテスト関数を末尾に足すのは通す(tmp_path):
+    root = make_repo(tmp_path)
+    new = APPEND_AFTER + "\n\ndef test_new():\n    assert f(3) == 4\n"
+    assert change_edit(root, TEST_X, APPEND_AFTER, new) is None
+
+
+def test_AC1_まだ無いテストファイルを作るのは通す(tmp_path):
+    root = make_repo(tmp_path)
+    assert (
+        change_write(root, "tests/test_new.py", "def test_n():\n    assert True\n")
+        is None
+    )
+
+
+def test_AC1_parametrizeのリストに値を足すのは通す(tmp_path):
+    root = make_repo(tmp_path)
+    assert change_edit(root, TEST_X, "[1, 2]", "[1, 2, 3]") is None
+
+
+def test_内容の情報がない呼び出しは今までどおり通す(tmp_path):
+    root = make_repo(tmp_path)
+    assert guard.decide("Edit", {"file_path": str(root / TEST_X)}, root) is None
+
+
+# AC-2（変える・弱める・消すは拒否）
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("    assert f(2) == 3\n", ""),  # assert 行を消す
+        ("    assert f(1) == 2\n", "    assert f(1) == 5\n"),  # 期待値を変える
+        ("[1, 2]", "[1, 9]"),  # parametrize の値を変える
+        ("    assert x > 0\n", "    assert x >= 0\n"),  # 比較を弱める
+    ],
+)
+def test_AC2_既存テストのassertや期待値を変える_消すは拒否する(tmp_path, old, new):
+    root = make_repo(tmp_path)
+    assert change_edit(root, TEST_X, old, new) is not None
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("def test_a():", "@pytest.mark.skip\ndef test_a():"),
+        ("def test_a():", "@pytest.mark.xfail\ndef test_a():"),
+        ("    assert f(1) == 2\n", "    pytest.skip('x')\n    assert f(1) == 2\n"),
+    ],
+)
+def test_AC2_既存テストにskipやxfailを付けるのは拒否する(tmp_path, old, new):
+    root = make_repo(tmp_path)
+    assert change_edit(root, TEST_X, old, new) is not None
+
+
+@pytest.mark.parametrize(
+    "appended",
+    [
+        "\n\n@pytest.mark.skip\ndef test_new():\n    assert True\n",
+        "\n\n@pytest.mark.xfail\ndef test_new():\n    assert False\n",
+        "\n\npytestmark = pytest.mark.skip\n",
+    ],
+)
+def test_AC2_新しく足すテストでもskipやxfailやpytestmarkは拒否する(tmp_path, appended):
+    root = make_repo(tmp_path)
+    assert change_edit(root, TEST_X, APPEND_AFTER, APPEND_AFTER + appended) is not None
+
+
+def test_AC2_既存テスト関数を消すのは拒否する(tmp_path):
+    root = make_repo(tmp_path)
+    old = "def test_a():\n    assert f(1) == 2\n    assert f(2) == 3\n\n\n"
+    assert change_edit(root, TEST_X, old, "") is not None
+
+
+def test_AC2_既存ファイルを丸ごと置き換えてassertが減るのは拒否する(tmp_path):
+    root = make_repo(tmp_path)
+    assert change_write(root, TEST_X, "def test_only():\n    assert True\n") is not None
+
+
+def test_AC2_内容が変わらない置き換えは通す(tmp_path):
+    root = make_repo(tmp_path)
+    assert change_write(root, TEST_X, BASE_TEST) is None
+
+
+def test_AC2_構文エラーになる変更は拒否する(tmp_path):
+    root = make_repo(tmp_path)
+    assert (
+        change_edit(root, TEST_X, "    assert f(1) == 2\n", "    assert f(1) ==\n")
+        is not None
+    )
+
+
+# Q12: 同名の定義（あとの定義が前を上書きする）
+
+
+@pytest.mark.parametrize(
+    "appended",
+    [
+        "\n\ndef test_a():\n    assert True\n",  # 同名の関数
+        "\n    def test_m(self):\n        assert False\n",  # 同じクラスの同名メソッド
+        "\n\ntest_a = lambda: None\n",  # 代入での上書き
+    ],
+)
+def test_Q12_同名の定義が増えるのは拒否する(tmp_path, appended):
+    root = make_repo(tmp_path)
+    assert change_edit(root, TEST_X, APPEND_AFTER, APPEND_AFTER + appended) is not None
+
+
+def test_Q12_別のクラスの同名メソッドは通す(tmp_path):
+    root = make_repo(tmp_path)
+    appended = "\n\nclass TestOther:\n    def test_m(self):\n        assert True\n"
+    assert change_edit(root, TEST_X, APPEND_AFTER, APPEND_AFTER + appended) is None
+
+
+# Q2: 「既存」の基準は HEAD。未コミットのテストは自由に直せる
+
+
+def test_Q2_HEADに無いファイルは自由に直せる(tmp_path):
+    root = make_repo(tmp_path)
+    (root / "tests/test_u.py").write_text(
+        "def test_u():\n    assert 1 == 1\n", encoding="utf-8"
+    )
+    assert (
+        change_edit(root, "tests/test_u.py", "assert 1 == 1", "assert 1 == 2") is None
+    )
+
+
+def test_Q2_未コミットで足したテストは直せるがHEADの行は変えられない(tmp_path):
+    root = make_repo(tmp_path)
+    p = root / TEST_X
+    p.write_text(BASE_TEST + "\n\ndef test_u():\n    assert 1 == 1\n", encoding="utf-8")
+    assert change_edit(root, TEST_X, "assert 1 == 1", "assert 1 == 2") is None
+    assert change_edit(root, TEST_X, "    assert f(2) == 3\n", "") is not None
+
+
+# Q11: HEAD が取れないとき
+
+
+def test_Q11_コミットが0件ならすべて新規として通す(tmp_path):
+    root = make_repo(tmp_path, commit=False)
+    assert change_edit(root, TEST_X, "    assert f(2) == 3\n", "") is None
+
+
+def test_Q11_gitのリポジトリではないなら拒否する(tmp_path):
+    root = make_repo(tmp_path, init=False)
+    assert (
+        change_edit(
+            root,
+            TEST_X,
+            "    assert f(1) == 2\n",
+            "    assert f(1) == 2\n    assert True\n",
+        )
+        is not None
+    )
+
+
+def test_Q11_gitコマンドが無いなら拒否する(tmp_path, monkeypatch):
+    root = make_repo(tmp_path)
+    monkeypatch.setenv("PATH", str(tmp_path / "no-such-dir"))
+    assert (
+        change_edit(
+            root,
+            TEST_X,
+            "    assert f(1) == 2\n",
+            "    assert f(1) == 2\n    assert True\n",
+        )
+        is not None
+    )
+
+
+def test_Q11_gitが時間内に答えないなら拒否する(tmp_path, monkeypatch):
+    root = make_repo(tmp_path)
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    script = fake / "git"
+    script.write_text("#!/bin/sh\nsleep 5\n", encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", str(fake))
+    monkeypatch.setattr(guard, "GIT_TIMEOUT_SECONDS", 0.3)
+    assert (
+        change_edit(
+            root,
+            TEST_X,
+            "    assert f(1) == 2\n",
+            "    assert f(1) == 2\n    assert True\n",
+        )
+        is not None
+    )
+
+
+def test_Q11_GIT_DIRを細工しても判定は変わらない(tmp_path, monkeypatch):
+    root = make_repo(tmp_path / "real")
+    evil = tmp_path / "evil"
+    evil.mkdir()
+    run_git(
+        evil, "init", "-q"
+    )  # コミット0件のリポジトリ（これが基準にされると、すべて「新規」で通ってしまう）
+    monkeypatch.setenv("GIT_DIR", str(evil / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(evil))
+    assert change_edit(root, TEST_X, "    assert f(2) == 3\n", "") is not None
+    assert (
+        change_edit(
+            root,
+            TEST_X,
+            APPEND_AFTER,
+            APPEND_AFTER + "\n\ndef test_n():\n    assert True\n",
+        )
+        is None
+    )
+
+
 # --- 実際のスクリプトを標準入力で動かす -----------------------------------------
 
 
