@@ -2,7 +2,7 @@
 id: 0004
 slug: hook-false-positive
 kind: feature # feature | chore | refactor（/req-new の最初の質問で決まる。振る舞いが変わらないなら chore か refactor）
-status: green # draft | clarifying | planned | red | green | done
+status: done # draft | clarifying | planned | red | green | done
 size: S1 # 暫定・要確認（1つの判定ロジックの修正。拒否側の退行を防ぐテストが要る）
 risk: [] # 暫定・要確認（タグには当たらない。ただしセキュリティ装置の変更なので、「拒否すべきものが通る」退行が最大の懸念。ACの拒否側で守る）
 ---
@@ -10,10 +10,10 @@ risk: [] # 暫定・要確認（タグには当たらない。ただしセキュ
 # 0004 hook-false-positive の状態
 
 ## いま
-G3待ち。test-plan の全項目（Q9 を含む）を実装し、green。下の「結果（AI下書き）」と、`guard.py` の差分を見て、よければ done にしてください。UNLOCK は外した（ロック済み）。
+done（G3で人間が確認済み）。変更は /req-fb（FB）で。UNLOCK は外してある（ロック済み）。
 
 ## 結果
-（AI下書き。done時に人間が確認して確定）
+（done時に人間が確認して確定）
 - 変更: `.claude/hooks/guard.py`（Bash の判定を作り直した）、`.claude/hooks/test_guard.py`（テストを46件追加。hook のテストは 87 → 133 件）。`make check` 通過。
 - AC-1（通す）と AC-2（拒否のまま）の全例、Q4〜Q8 の判定、FB 1 の8つの例が、テストで通る。実際の hook（本物のセッション）でも、通すべき2例（今回の事例、cat の heredoc）が通り、拒否すべき2例（python が `CLAUDE.md` を直接開く、`bash <<<` で保護対象に touch）が拒否されることを確かめた。
 - 直したこと: (1) python の heredoc は、書き込み先（リテラル、リテラルを代入した変数）で判定する。(2) `cat`、`tee` などデータだけを受けるコマンドの heredoc は、本文を調べない。引用符なしなら、展開される `$(…)` とバッククォートだけ調べ、解析しきれないものは拒否する。(3) here-string（`<<<`）は、受け取るのがインタプリタなら中身を調べる。
