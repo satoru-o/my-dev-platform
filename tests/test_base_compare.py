@@ -94,6 +94,62 @@ def test_AC5_テストの検出は承認ラベルがあれば緑で承認した�
     assert report.approved[0].reason
 
 
+def test_AC5_テストと守りの仕組みの検出が混ざるときはラベルが両方要る():
+    changes = [
+        core.FileChange(
+            path="tests/test_a.py",
+            base_src="def test_a():\n    assert add(2, 3) == 5\n",
+            head_src="def test_a():\n    assert add(2, 3) == 6\n",
+        ),
+        core.FileChange(path="Makefile", base_src="a\n", head_src="b\n"),
+    ]
+
+    only_test = core.check(
+        changes=changes,
+        base_ids=frozenset(),
+        head_ids=frozenset(),
+        labels=frozenset({"test-change-approved"}),
+    )
+    both = core.check(
+        changes=changes,
+        base_ids=frozenset(),
+        head_ids=frozenset(),
+        labels=frozenset({"test-change-approved", "guard-change-approved"}),
+    )
+
+    assert only_test.verdict == "red"
+    assert [f.path for f in only_test.findings] == ["Makefile"]
+    assert both.verdict == "green"
+    assert sorted(f.path for f in both.approved) == ["Makefile", "tests/test_a.py"]
+
+
+def test_AC5_検出が無いPRにラベルだけ付いていても緑():
+    report = core.check(
+        changes=[],
+        base_ids=frozenset(),
+        head_ids=frozenset(),
+        labels=frozenset({"test-change-approved", "guard-change-approved"}),
+    )
+
+    assert report.verdict == "green"
+    assert report.findings == []
+    assert report.approved == []
+
+
+def test_AC4_テストでも守りの仕組みでもないファイルの変更は検出しない():
+    change = core.FileChange(path="docs/a.md", base_src="a\n", head_src="b\n")
+
+    report = core.check(
+        changes=[change],
+        base_ids=frozenset(),
+        head_ids=frozenset(),
+        labels=frozenset(),
+    )
+
+    assert report.verdict == "green"
+    assert report.findings == []
+
+
 def test_AC1_pytestの設定を変えると赤():
     change = core.FileChange(
         path="pyproject.toml",
