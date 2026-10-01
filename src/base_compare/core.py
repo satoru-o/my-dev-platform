@@ -61,6 +61,7 @@ def _is_guard_path(path: str) -> bool:
 
 def check(changes, base_ids, head_ids, labels, tool_errors=()) -> Report:
     findings = []
+    errors = list(tool_errors)
     for change in changes:
         if _is_guard_path(change.path):
             findings.append(
@@ -75,8 +76,11 @@ def check(changes, base_ids, head_ids, labels, tool_errors=()) -> Report:
             continue
         try:
             reason = change_reason_for(change.path, change.base_src, change.head_src)
-        except Exception:  # スタブ（Red 用。わざと握りつぶす）
-            reason = None
+        except Exception as e:  # 想定外の例外は、ツール自身の失敗（承認でも赤）
+            errors.append(
+                f"{change.path}: 比較の関数が例外を投げた（{type(e).__name__}）"
+            )
+            continue
         if reason:
             findings.append(Finding(path=change.path, reason=reason))
     for lost in sorted(base_ids - head_ids):
@@ -84,8 +88,8 @@ def check(changes, base_ids, head_ids, labels, tool_errors=()) -> Report:
     approved = [f for f in findings if LABEL_FOR[f.category] in labels]
     remaining = [f for f in findings if f not in approved]
     return Report(
-        verdict="red" if remaining or tool_errors else "green",
+        verdict="red" if remaining or errors else "green",
         findings=remaining,
         approved=approved,
-        errors=list(tool_errors),
+        errors=errors,
     )
