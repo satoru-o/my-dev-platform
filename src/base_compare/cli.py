@@ -1,6 +1,9 @@
 """検査の入口。CI（失敗にする）と、ローカル（警告だけ）の2つの動かし方。"""
 
-from base_compare import core, gitio, report
+import tempfile
+from pathlib import Path
+
+from base_compare import collect, core, gitio, report
 
 
 def run(repo, base_ref, labels, mode, collect_ids):
@@ -33,4 +36,18 @@ def run(repo, base_ref, labels, mode, collect_ids):
 
 
 def make_collector(repo, base_ref):
-    return lambda which: frozenset()  # スタブ（Red 用。わざと誤った値）
+    """IDの収集の関数（which は "base" か "head"）。基準は worktree で集める。"""
+
+    def collector(which):
+        if which == "head":
+            return collect.collect_in(repo)
+        base = gitio.run_git(repo, "merge-base", base_ref, "HEAD").decode().strip()
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "base"
+            gitio.run_git(repo, "worktree", "add", "--detach", str(work), base)
+            try:
+                return collect.stable_ids(lambda: collect.collect_in(work))
+            finally:
+                gitio.run_git(repo, "worktree", "remove", "--force", str(work))
+
+    return collector
