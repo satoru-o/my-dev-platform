@@ -21,11 +21,13 @@ Bash は、書き込みに見えるコマンドだけを見る「ベストエフ
 想定外の例外は、安全側（拒否）に倒す。
 """
 
+import ast
 import bisect
 import json
 import os
 import posixpath
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -129,6 +131,233 @@ def deny_reason(kind: str, root: Path) -> str | None:
                 "tests/ はreqなしに編集できません。`/req-new` / `/req-run` / `/req-fb` で進めてください。"
             )
     return None
+
+
+# --- 既存テストを黙って書き換えさせない（0007） -------------------------------------
+# 「既存」の基準は、最後にコミットした内容（HEAD）。足すのは自由。変える・弱める・消すは拒否する。
+
+SKIP_NAMES = {"skip", "skipif", "xfail"}
+CHANGE_HINT = (
+    "足すのは自由です。承認する場合は、人間が `! touch .claude/ALLOW_TEST_CHANGE` を実行します"
+    "（1回使うと消えます。承認した変更は、すぐコミットしてください）。"
+)
+
+
+class GitError(Exception):
+    """「既存」の基準（HEAD）が取れない。呼び出し側は、拒否側に倒す。"""
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
+    # 作業フォルダを固定し、GIT_ で始まる環境変数（GIT_DIR など）を掃除して呼ぶ。
+    # 別のリポジトリを「基準」にされて、すべて新規として通ってしまうのを防ぐ。
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    try:
+        return subprocess.run(  # noqa: S603
+            ["git", "-C", str(root), "--no-pager", *args],  # noqa: S607
+            capture_output=True,
+            cwd=root,
+            env=env,
+            timeout=GIT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise GitError("git が時間内に答えない") from e
+    except OSError as e:
+        raise GitError(f"git を実行できない（{type(e).__name__}）") from e
+
+
+def head_content(root: Path, rel: str) -> str | None:
+    """HEAD にあるファイルの内容。HEAD に無い（新規）、コミットが0件なら None。
+
+    基準が取れなければ GitError。「コミット0件」と「git の失敗」は、別に判定する。
+    """
+    has_head = _git(root, "rev-parse", "--verify", "--quiet", "HEAD")
+    if has_head.returncode == 1 and not has_head.stdout.strip():
+        return None  # コミットが0件: すべて新規として扱う
+    if has_head.returncode != 0:
+        raise GitError("git rev-parse が失敗した（リポジトリではない、など）")
+    tree = _git(root, "ls-tree", "-z", "HEAD", "--", rel)
+    if tree.returncode != 0:
+        raise GitError("git ls-tree が失敗した")
+    if not tree.stdout:
+        return None  # HEAD に無い: 新規
+    meta = tree.stdout.split(b"\t", 1)[0].decode("utf-8", "replace").split()
+    if len(meta) < 3 or meta[1] != "blob":
+        return None
+    blob = _git(root, "cat-file", "blob", meta[2])
+    if blob.returncode != 0:
+        raise GitError("git cat-file が失敗した")
+    return blob.stdout.decode("utf-8", "replace")
+
+
+def _assigned_names(node: ast.stmt) -> list[str]:
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]  # type: ignore[attr-defined]
+    return [t.id for t in targets if isinstance(t, ast.Name)]
+
+
+def _is_skip(node: ast.AST) -> bool:
+    if isinstance(node, ast.Attribute):
+        return node.attr in SKIP_NAMES
+    return isinstance(node, ast.Name) and node.id in SKIP_NAMES
+
+
+class _Model:
+    """テストファイルの、比べるための見取り図。"""
+
+    def __init__(self, src: str) -> None:
+        tree = ast.parse(src)
+        self.defs: dict[
+            str, list[ast.stmt]
+        ] = {}  # 修飾名（`Class::method`）→ 定義の一覧
+        self.top: list[str] = []  # モジュール直下の、定義でない文（import、定数など）
+        self.skips = sum(1 for n in ast.walk(tree) if _is_skip(n))
+        self._walk(tree.body, "")
+
+    def _walk(self, body: list[ast.stmt], prefix: str) -> None:
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                self.defs.setdefault(prefix + node.name, []).append(node)
+                if isinstance(node, ast.ClassDef):
+                    self._walk(node.body, prefix + node.name + "::")
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                for name in _assigned_names(node):
+                    self.defs.setdefault(prefix + name, []).append(
+                        node
+                    )  # 代入での上書きも「定義」
+                if not prefix:
+                    self.top.append(ast.dump(node))
+            elif not prefix:
+                self.top.append(ast.dump(node))
+
+
+def _is_subsequence(small: list[str], big: list[str]) -> bool:
+    it = iter(big)
+    return all(x in it for x in small)
+
+
+def _is_parametrize(d: ast.expr) -> bool:
+    return isinstance(d, ast.Call) and getattr(d.func, "attr", None) == "parametrize"
+
+
+def _param_extends(b: ast.Call, n: ast.Call) -> bool:
+    """parametrize の値のリストに、値を足すだけ（元の値は、順序も含めて残る）なら True。"""
+    if len(b.args) != len(n.args) or len(b.args) < 2:
+        return ast.dump(b) == ast.dump(n)
+    for i, (x, y) in enumerate(zip(b.args, n.args, strict=True)):
+        if (
+            i == 1
+            and isinstance(x, (ast.List, ast.Tuple))
+            and isinstance(y, (ast.List, ast.Tuple))
+        ):
+            if not _is_subsequence(
+                [ast.dump(e) for e in x.elts], [ast.dump(e) for e in y.elts]
+            ):
+                return False
+        elif ast.dump(x) != ast.dump(y):
+            return False
+    return [ast.dump(k) for k in b.keywords] == [ast.dump(k) for k in n.keywords]
+
+
+def _compare_def(base: ast.stmt, new: ast.stmt) -> str | None:
+    if type(base) is not type(new):
+        return "別の種類の定義に置き換わった"
+    if isinstance(base, (ast.Assign, ast.AnnAssign)):
+        return None if ast.dump(base) == ast.dump(new) else "代入の内容が変わった"
+    assert isinstance(base, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    assert isinstance(new, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    base_params = [d for d in base.decorator_list if _is_parametrize(d)]
+    new_params = [d for d in new.decorator_list if _is_parametrize(d)]
+    base_others = [ast.dump(d) for d in base.decorator_list if not _is_parametrize(d)]
+    new_others = [ast.dump(d) for d in new.decorator_list if not _is_parametrize(d)]
+    if not _is_subsequence(base_others, new_others):
+        return "デコレータが変わった・消えた"
+    if len(new_params) < len(base_params):
+        return "parametrize が消えた"
+    for b, n in zip(base_params, new_params, strict=False):
+        if not _param_extends(b, n):  # type: ignore[arg-type]
+            return "parametrize の値が変わった・消えた"
+    if isinstance(base, ast.ClassDef) and isinstance(new, ast.ClassDef):
+        bases = [ast.dump(x) for x in (*base.bases, *base.keywords)]
+        if bases != [ast.dump(x) for x in (*new.bases, *new.keywords)]:
+            return "基底クラスが変わった"
+        return None
+    if isinstance(base, ast.ClassDef) or isinstance(new, ast.ClassDef):
+        return "別の種類の定義に置き換わった"
+    if ast.dump(base.args) != ast.dump(new.args):
+        return "引数が変わった"
+    if not _is_subsequence(
+        [ast.dump(s) for s in base.body], [ast.dump(s) for s in new.body]
+    ):
+        return "本文の assert や文が、変わった・消えた"
+    return None
+
+
+def python_change_reason(base_src: str | None, new_src: str) -> str | None:
+    """テストファイルの、HEAD からの変更が「足すだけ」でなければ、その理由。足すだけなら None。"""
+    if base_src is None or base_src == new_src:
+        return None  # 新規、または変更なし
+    try:
+        base, new = _Model(base_src), _Model(new_src)
+    except (SyntaxError, ValueError, RecursionError):
+        return "解析しきれない（構文エラーなど）ため、拒否側に倒した"
+    if new.skips > base.skips:
+        return "skip / xfail を足す変更"
+    if not _is_subsequence(base.top, new.top):
+        return "モジュール直下の文（import、定数、pytestmark など）が、変わった・消えた"
+    for name, base_nodes in base.defs.items():
+        new_nodes = new.defs.get(name, [])
+        if len(new_nodes) < len(base_nodes):
+            return f"`{name}` の定義が、消えた"
+        if len(new_nodes) > len(base_nodes):
+            return f"`{name}` と同名の定義が、HEAD より増えた（あとの定義が、前を上書きする）"
+        for b, n in zip(base_nodes, new_nodes, strict=True):
+            why = _compare_def(b, n)
+            if why:
+                return f"`{name}`: {why}"
+    return None
+
+
+def _is_test_py(rel: str) -> bool:
+    return (rel.startswith("tests/") and rel.endswith(".py")) or rel == "conftest.py"
+
+
+def _new_content(tool_name: str, tool_input: dict, path: Path) -> str | None:
+    """Edit・Write が成功したときの、ファイルの内容。内容の情報が無ければ None。"""
+    if tool_name == "Write":
+        content = tool_input.get("content")
+        return content if isinstance(content, str) else None
+    old, new = tool_input.get("old_string"), tool_input.get("new_string")
+    if not isinstance(old, str) or not isinstance(new, str) or not old:
+        return None
+    try:
+        current = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if old not in current:
+        return None  # Edit 自体が失敗する
+    return (
+        current.replace(old, new)
+        if tool_input.get("replace_all")
+        else current.replace(old, new, 1)
+    )
+
+
+def change_reason(tool_name: str, tool_input: dict, root: Path, rel: str) -> str | None:
+    """Edit・Write が、既存のテストを黙って変えるものなら、拒否する理由。"""
+    if not _is_test_py(rel):
+        return None
+    new_src = _new_content(tool_name, tool_input, root / rel)
+    if new_src is None:
+        return None
+    try:
+        why = python_change_reason(head_content(root, rel), new_src)
+    except GitError as e:
+        return (
+            f"「既存」の基準（HEAD）が取れないため、拒否しました（{e}）。{CHANGE_HINT}"
+        )
+    if why is None:
+        return None
+    return f"既存のテストを変える・弱める・消す変更です（{why}）。{CHANGE_HINT}"
 
 
 # --- Bash: heredoc の解析 -----------------------------------------------------
@@ -427,7 +656,10 @@ def decide(tool_name: str, tool_input: dict, root: Path) -> str | None:
             return None
         rel = rel_path(str(path), root)
         kind = kind_of(rel) if rel is not None else None
-        return deny_reason(kind, root) if kind else None
+        reason = deny_reason(kind, root) if kind else None
+        if reason or rel is None or tool_name not in ("Edit", "Write"):
+            return reason
+        return change_reason(tool_name, tool_input, root, rel)
     if tool_name == "Bash":
         for kind in bash_kinds(str(tool_input.get("command", "")), root):
             reason = deny_reason(kind, root)
