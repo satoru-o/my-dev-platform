@@ -2,4 +2,8 @@
 
 
 def render(report) -> str:
-    return ""  # スタブ（Red 用。わざと誤った値）
+    lines = []
+    if report.approved:
+        lines.append("## 承認した内容")
+        lines += [f"- `{f.path}`: {f.reason}" for f in report.approved]
+    return "\n".join(lines)
