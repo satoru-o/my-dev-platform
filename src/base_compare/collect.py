@@ -16,3 +16,7 @@ def stable_ids(collect_once) -> frozenset[str]:
     if collect_once() != first:
         raise ToolError("同じコードを2回収集したら、テストIDの一覧が食い違った")
     return first
+
+
+def collect_in(directory, timeout: float = 300.0) -> frozenset[str]:
+    return frozenset()  # スタブ（Red 用。わざと誤った値）

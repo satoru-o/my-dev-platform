@@ -15,6 +15,17 @@ def test_S02_収集の出力からIDの集合を読む_重複は1つ_要約の�
     )
 
 
+def test_AC3_ディレクトリで実際に収集して_IDの集合を返す(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_x.py").write_text(
+        "def test_x():\n    assert True\n\n\ndef test_y():\n    assert True\n"
+    )
+
+    assert collect.collect_in(tmp_path) == frozenset(
+        {"tests/test_x.py::test_x", "tests/test_x.py::test_y"}
+    )
+
+
 def test_S03_同じコードを2回収集して同じなら_そのIDの集合を返す():
     calls = []
 
