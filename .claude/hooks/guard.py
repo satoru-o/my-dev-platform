@@ -15,8 +15,10 @@ Bash は、書き込みに見えるコマンドだけを見る「ベストエフ
 
 import json
 import os
+import posixpath
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 PROTECTED = (".claude", "CLAUDE.md", ".github", "specs/README.md", "specs/_catalog")
@@ -42,6 +44,12 @@ PY_WRITE = (
     r"(?:write_text|write_bytes|\.write\(|open\([^)]*[\"'][wax+]"
     r"|shutil\.(?:copy|move|rmtree)|os\.(?:remove|rename|replace|unlink))"
 )
+
+# heredoc（`<<`）。here-string（`<<<`）は含めない。
+HEREDOC_RE = re.compile(
+    r"(?<!<)<<(?!<)(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|(\\?)([A-Za-z_][\w.-]*))"
+)
+PYTHON_WORD_RE = re.compile(r"(?<![\w./-])python[\d.]*(?![\w.-])")
 
 
 def statuses(root: Path) -> list[str]:
@@ -107,16 +115,135 @@ def deny_reason(kind: str, root: Path) -> str | None:
     return None
 
 
-def bash_kinds(command: str) -> list[str]:
-    """書き込みに見えるコマンドが触れるパスの種類（ベストエフォート）。"""
+# --- Bash: heredoc の解析 -----------------------------------------------------
+
+
+@dataclass
+class Heredoc:
+    """heredoc 1つ分。body は本文（終了行は含まない）。"""
+
+    receiver: str  # `<<` を含む1行。受け取るコマンドの判定に使う
+    body: str
+
+
+def split_heredocs(command: str) -> tuple[str, list[Heredoc]]:
+    """コマンドを、本文を除いたシェルの文と、heredoc の一覧に分ける。
+
+    終了行は、`<<` なら行全体が区切り語と等しいとき、`<<-` なら行頭のタブを除いて等しいとき。
+    空白つきの `EOF` などは終了行にならない（シェルの規則どおり）。閉じていなければ末尾まで本文。
+    """
+    lines = command.split("\n")
+    shell: list[str] = []
+    docs: list[Heredoc] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        shell.append(line)
+        i += 1
+        for m in HEREDOC_RE.finditer(line):
+            dash = bool(m.group(1))
+            delim = m.group(2) or m.group(3) or m.group(5)
+            body: list[str] = []
+            while i < len(lines):
+                cur = lines[i]
+                i += 1
+                if (cur.lstrip("\t") if dash else cur) == delim:
+                    break
+                body.append(cur)
+            docs.append(Heredoc(receiver=line, body="\n".join(body)))
+    return "\n".join(shell), docs
+
+
+# --- Bash: python の書き込み先の判定 -------------------------------------------
+
+_STR = r"""(?:'([^'\n]*)'|"([^"\n]*)")"""
+_ARG = rf"""\s*(?:{_STR}|([A-Za-z_]\w*))"""
+_ASSIGN_RE = re.compile(rf"""\b([A-Za-z_]\w*)\s*=\s*(?:Path\(\s*)?{_STR}""")
+_OPEN_RE = re.compile(
+    rf"""\bopen\({_ARG}\s*(?:,\s*(?:mode\s*=\s*)?['"]([^'"\n]*)['"])?"""
+)
+_PATH_WRITE_RE = re.compile(
+    rf"""\bPath\({_ARG}\s*\)\s*\.\s*(?:write_text|write_bytes)\b"""
+)
+_VAR_WRITE_RE = re.compile(r"""\b([A-Za-z_]\w*)\s*\.\s*(?:write_text|write_bytes)\b""")
+_FUNC_RE = re.compile(
+    rf"""\b(?:shutil\.(?:copy|copy2|copyfile|move|rmtree)|os\.(?:remove|rename|replace|unlink))\({_ARG}(?:\s*,{_ARG})?"""
+)
+
+
+def _path_kind(path: str, root: Path) -> str | None:
+    if posixpath.isabs(path):
+        rel = rel_path(path, root)
+    else:
+        rel = rel_path(path, root)
+    return kind_of(rel) if rel is not None else None
+
+
+def python_kinds(code: str, root: Path) -> set[str]:
+    """python のコードが書き込む（と判断できる）パスの種類。
+
+    書き込み先は、文字列リテラルか、リテラルを代入した変数から読む。
+    代入が見えない変数（`p=sys.argv[1]` など）は、判断できないので通す（ベストエフォート）。
+    """
+    assigns: dict[str, str] = {}
+    for m in _ASSIGN_RE.finditer(code):
+        assigns[m.group(1)] = m.group(2) if m.group(2) is not None else m.group(3)
+
+    def resolve(single: str | None, double: str | None, ident: str | None):
+        if single is not None:
+            return single
+        if double is not None:
+            return double
+        return assigns.get(ident or "")
+
+    targets: list[str | None] = []
+    for m in _OPEN_RE.finditer(code):
+        mode = m.group(4)
+        if mode and set(mode) & set("wax+"):
+            targets.append(resolve(m.group(1), m.group(2), m.group(3)))
+    for m in _PATH_WRITE_RE.finditer(code):
+        targets.append(resolve(m.group(1), m.group(2), m.group(3)))
+    for m in _VAR_WRITE_RE.finditer(code):
+        targets.append(assigns.get(m.group(1)))
+    for m in _FUNC_RE.finditer(code):
+        targets.append(resolve(m.group(1), m.group(2), m.group(3)))
+        targets.append(resolve(m.group(4), m.group(5), m.group(6)))
+
+    kinds: set[str] = set()
+    for t in targets:
+        if t:
+            kind = _path_kind(t, root)
+            if kind:
+                kinds.add(kind)
+    return kinds
+
+
+# --- Bash: 判定 -------------------------------------------------------------------
+
+
+def _legacy_kinds(text: str) -> list[str]:
+    """書き込みに見えるシェルのコマンドが触れるパスの種類（ベストエフォート）。"""
     kinds = []
     for kind, path in PATH_RE.items():
         redirect = rf">>?\s*[\"']?(?:[^\s\"';&|]*/)?{path}"
         verb = rf"{WRITE_VERB}[^;&|\n]*{path}"
-        py = bool(re.search(PY_WRITE, command)) and bool(re.search(path, command))
-        if re.search(redirect, command) or re.search(verb, command, re.MULTILINE) or py:
+        py = bool(re.search(PY_WRITE, text)) and bool(re.search(path, text))
+        if re.search(redirect, text) or re.search(verb, text, re.MULTILINE) or py:
             kinds.append(kind)
     return kinds
+
+
+def bash_kinds(command: str, root: Path) -> list[str]:
+    """書き込みに見えるコマンドが触れるパスの種類（ベストエフォート）。"""
+    shell, docs = split_heredocs(command)
+    kinds: set[str] = set()
+    for d in docs:
+        if PYTHON_WORD_RE.search(d.receiver):
+            kinds |= python_kinds(d.body, root)  # python の本文は、書き込み先で判定する
+        else:
+            shell += "\n" + d.body  # 今までどおり、本文も調べる
+    kinds |= set(_legacy_kinds(shell))
+    return [k for k in PATH_RE if k in kinds]
 
 
 def decide(tool_name: str, tool_input: dict, root: Path) -> str | None:
@@ -129,7 +256,7 @@ def decide(tool_name: str, tool_input: dict, root: Path) -> str | None:
         kind = kind_of(rel) if rel is not None else None
         return deny_reason(kind, root) if kind else None
     if tool_name == "Bash":
-        for kind in bash_kinds(str(tool_input.get("command", ""))):
+        for kind in bash_kinds(str(tool_input.get("command", "")), root):
             reason = deny_reason(kind, root)
             if reason:
                 return reason
