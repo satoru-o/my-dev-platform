@@ -70,7 +70,15 @@ def main(argv=None):
             args.mode,
             make_collector(args.repo, args.base),
         )
-    except Exception:
-        return 0  # スタブ（Red 用。わざと誤った値）
+    except Exception as e:  # 想定外の例外は、ツール自身の失敗。型名だけを出す
+        code, text = run_failed(args.mode, type(e).__name__)
     print(text)
     return code
+
+
+def run_failed(mode, error_name):
+    """想定外の例外のときの（終了コード, 要約）。メッセージやパスは出さない。"""
+    text = f"## ツール自身の失敗（承認でも通せない）\n- 想定外の例外（{error_name}）"
+    if mode == "local":
+        return 0, f"警告（ローカルでは失敗にしない）\n⚠️ 比較できなかった\n{text}"
+    return 1, text
