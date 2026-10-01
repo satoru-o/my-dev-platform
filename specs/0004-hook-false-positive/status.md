@@ -2,7 +2,7 @@
 id: 0004
 slug: hook-false-positive
 kind: feature # feature | chore | refactor（/req-new の最初の質問で決まる。振る舞いが変わらないなら chore か refactor）
-status: green # draft | clarifying | planned | red | green | done
+status: planned # draft | clarifying | planned | red | green | done
 size: S1 # 暫定・要確認（1つの判定ロジックの修正。拒否側の退行を防ぐテストが要る）
 risk: [] # 暫定・要確認（タグには当たらない。ただしセキュリティ装置の変更なので、「拒否すべきものが通る」退行が最大の懸念。ACの拒否側で守る）
 ---
@@ -10,7 +10,7 @@ risk: [] # 暫定・要確認（タグには当たらない。ただしセキュ
 # 0004 hook-false-positive の状態
 
 ## いま
-test-plan の全項目を実装し、green。ただし、**退行が1件**見つかった（`discussion-log.md` の Round 4、Q9）。回答してください（推奨: A）。A なら、直すために `! touch .claude/UNLOCK` を実行してください（今はロック済み）。そのあとで G3（done の確認）。
+Q9=A を反映し、planned。次は Red（ruby の File.write が拒否されること）。`guard.py` と `test_guard.py` を直すため、`! touch .claude/UNLOCK` を実行してください（今はロック済み）。そのあとで G3（done の確認）。
 
 ## 結果
 （AI下書き。done時に人間が確認して確定）
