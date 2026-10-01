@@ -41,4 +41,6 @@ def collect_in(directory, timeout: float = 300.0) -> frozenset[str]:
         )
     except subprocess.TimeoutExpired as e:
         raise ToolError("テストの収集が時間内に終わらない") from e
+    if done.returncode not in (0, 5):  # 5 は「テストが1件も無い」（失敗ではない）
+        raise ToolError("テストの収集に失敗した")
     return parse_ids(done.stdout.decode("utf-8", "replace"))
