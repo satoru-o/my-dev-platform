@@ -2,7 +2,7 @@
 id: 0012
 slug: pure-compare
 kind: refactor # feature | chore | refactor（/req-new の最初の質問で決まる。振る舞いが変わらないなら chore か refactor）
-status: green # draft | clarifying | planned | red | green | done
+status: done # draft | clarifying | planned | red | green | done
 size: S0 # 暫定・要確認（kind: refactor は S0）
 risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除のいずれにも該当しない。ただし hook は守りの仕組みなので、判定が同一であることを、機械で確かめる）
 ---
@@ -10,7 +10,7 @@ risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除
 # 0012 pure-compare の状態
 
 ## いま
-green。G3 待ち: 結果を確認して、done にしてよいか返してください。確認してほしい点が2つあります（「気づき」の1と2）。UNLOCK は、外してかまいません。
+done。G3 確認済み。次は段階3（`origin/main` との比較を CI に足す）。「気づき」1（`tool = 1` で例外）は、段階6の候補。段階4で `tools/guard-equiv/` を保護パスに足す。
 
 ## 結果
 ### 何を変えたか
