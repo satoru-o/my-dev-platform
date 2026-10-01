@@ -2,7 +2,7 @@
 id: 0005
 slug: charter-refresh
 kind: chore # feature | chore | refactor（/req-new の最初の質問で決まる。振る舞いが変わらないなら chore か refactor）
-status: green # draft | clarifying | planned | red | green | done
+status: done # draft | clarifying | planned | red | green | done
 size: S0 # 暫定・要確認（kind: chore は S0）
 risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除のいずれにも該当しない）
 ---
@@ -10,12 +10,12 @@ risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除
 # 0005 charter-refresh の状態
 
 ## いま
-G3待ち。下の「結果（AI下書き）」と `docs/CHARTER.md` の差分を見て、よければ done にしてください。
+done（G3で人間が確認済み）。変更は /req-fb（FB）で。
 
 ## 結果
-（AI下書き。done時に人間が確認して確定）
+（done時に人間が確認して確定）
 - 変更: `docs/CHARTER.md` だけ（13行追加、11行削除。方針・スコープ・順序の本文は変更なし）。進捗表の M3、M4、M2、M5以降の行、成功の見方の判定（2行）、次の一歩を更新。見出しの日付を 2026-10-01 にそろえた。
 - 確認: `make check` 終了コード0（163件: tests/ 30件、hook 133件）。古い記述（「リモートが未設定」、「テスト87件」、「テスト16件」、UNLOCK の残存が未確認、「0001 への FB として足す」、2026-09-30 の日付）は、すべて0件。数字（テスト30件、hook テスト133件、0001 と 0004 が done）を、実物と照合して一致。変更ファイルは CHARTER と 0005 だけ。
-- 未確認として残したもの（CHARTER にも明記）: red の間の `tests/` 拒否（単体テストのみ）、リモートの公開範囲（private か）、GitHub 側のブランチ保護などの設定。
+- 未確認として残したもの（CHARTER にも明記）: red の間の `tests/` 拒否（単体テストのみ）、GitHub 側のブランチ保護などの設定。リモートの公開範囲は、人間が「private で作成した」と申告したので、CHARTER に「private（人間が作成時に指定。AI は GitHub 側では未確認）」と書いた（G3 の確認時に反映）。
 - 範囲を超えた点（要確認）: 進捗表の M2 の行と、成功の見方の判定の「リモートが未設定」を訂正した。確認項目は M3・M4 の行の更新だったが、人間が GitHub のリモート `origin` を設定した事実（`git remote -v` で確認。`git ls-remote` で `main` が `f0164f3` まで push されていることも確認）が、CHARTER の記述を古くしていたため。0005 の「やらないこと」に、その旨を書き足した。範囲外と思えば戻す。
 - 気づき（照合スクリプトの不備）: 確認の途中で `make check` が「失敗した」と表示されたが、実際は、`grep -c` が0件で終了コード1を返し、`&&` の連鎖が途中で切れて、`make check` が実行されないまま、前の終了コードが表示されていただけだった。流し直して、終了コード0を確認した。
