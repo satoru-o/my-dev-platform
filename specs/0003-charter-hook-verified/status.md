@@ -2,7 +2,7 @@
 id: 0003
 slug: charter-hook-verified
 kind: chore # feature | chore | refactor（/req-new の最初の質問で決まる。振る舞いが変わらないなら chore か refactor）
-status: green # draft | clarifying | planned | red | green | done
+status: done # draft | clarifying | planned | red | green | done
 size: S0 # 暫定・要確認（kind: chore は S0）
 risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除のいずれにも該当しない）
 ---
@@ -10,10 +10,10 @@ risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除
 # 0003 charter-hook-verified の状態
 
 ## いま
-G3待ち。下の「結果（AI下書き）」と `docs/CHARTER.md` の差分を見て、よければ done にしてください。
+done（G3で人間が確認済み）。変更は /req-fb（FB）で。
 
 ## 結果
-（AI下書き。done時に人間が確認して確定）
+（done時に人間が確認して確定）
 - 変更: `docs/CHARTER.md` だけ（4行ずつの差し替え。方針・スコープ・順序の本文は変更なし）。進捗表の M4（hook の確認結果）、リスク表の1行（規約→hook）、次の一歩の1項目を更新。
 - 確認: `make check` 終了コード0。旧い「実際に止まるかは未確認」の記述は0件。未確認として残したのは、UNLOCK を置いた状態での書き込みの残存と、red の間の `tests/` 拒否（単体テストのみ）の2点。変更ファイルは CHARTER と 0003 だけ。
 - 書いた「確認済み」の根拠は、2026-10-01 に開き直したセッションでの試行: 拒否4種（保護対象への Write、`src/` と `tests/` への Write、Bash の `touch` で保護対象を触る回り込み）、通過2種（`git status`、`make check`）、UNLOCK を外した後の再拒否。
