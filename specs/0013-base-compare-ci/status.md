@@ -10,7 +10,7 @@ risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除
 # 0013 base-compare-ci の状態
 
 ## いま
-clarifying（G1 待ち）。`discussion-log.md` の Round 1 に、5問（推奨つき）を書いた。「回答:」に、記号（A/B/C）を書いてください。答えなければ、推奨で進みます。size は S2（暫定・AI提案・要確認）。そのあと `/req-run 0013`。UNLOCK は、いまは要りません。
+clarifying（G2 待ち）。Round 1 の5問の回答を `req.md` に反映し（`### AI回答（Round 1）`）、`test-plan.md`（S2、カタログ14行）を書いた。見てほしいのは、(1) test-plan の「適用しない」の理由（O-02 の1行だけ）と `⚠️` の行（S-01、S-04、X-01、O-01）、(2) `discussion-log.md` の Round 2（Q6〜Q9。**答えなくてよい。答えなければ推奨で進む**）、(3) size S2（暫定・AI提案・要確認）。承認したら `/req-run 0013`（planned にして、テスト1件目から）。UNLOCK は、実装に入る前に、`! touch .claude/UNLOCK`（`.github/**` を触るため）。
 
 ## 結果
 <!-- done時に記入: 何ができたか、テスト件数、気づき -->
