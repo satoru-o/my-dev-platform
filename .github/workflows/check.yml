@@ -67,6 +67,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           ACTION: ${{ github.event.action }}
         run: |
+          set -o pipefail  # 既定の shell は pipefail が無く、tee が終了コードを隠すため
           if [ "$ACTION" = "synchronize" ]; then
             LABELS=""
           else
