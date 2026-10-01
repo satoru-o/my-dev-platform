@@ -299,6 +299,40 @@ def test_commandが空や無いときは今までどおり通す(tmp_path):
     assert guard.decide("Bash", {}, root) is None
 
 
+# Red 3（Q4、Q5）: 引用符なしの heredoc は、本文の `$(…)` とバッククォートが展開される
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat > specs/x.md <<EOF\n$(touch .claude/x)\nEOF",
+        "cat > specs/x.md <<EOF\n`touch .claude/x`\nEOF",
+        # 解析しきれないもの（閉じていない、入れ子が深すぎる）は、拒否側に倒す
+        "cat > specs/x.md <<EOF\n$(touch .claude/x\nEOF",
+        "cat > specs/x.md <<EOF\n" + "$(" * 30 + "date" + ")" * 30 + "\nEOF",
+    ],
+)
+def test_引用符なしのheredocは本文の展開される部分を調べる(tmp_path, command):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, command) is not None
+
+
+def test_引用符なしのheredocでも無害な展開は通す(tmp_path):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, "cat > specs/x.md <<EOF\ntoday: $(date)\nEOF") is None
+
+
+def test_引用符ありのheredocは展開されないので通す(tmp_path):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, "cat > specs/x.md <<'EOF'\n$(touch .claude/x)\nEOF") is None
+
+
+def test_heredocが終わったあとの行は普通のコマンドとして調べる(tmp_path):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    command = "cat > specs/x.md <<'EOF'\nbody\nEOF\ntouch .claude/x"
+    assert bash(root, command) is not None
+
+
 # --- 実際のスクリプトを標準入力で動かす -----------------------------------------
 
 
