@@ -1,6 +1,5 @@
-from test_base_compare_gather import git, make_repo
-
 from base_compare import cli
+from test_base_compare_gather import git, make_repo
 
 
 def red_repo(tmp_path):
