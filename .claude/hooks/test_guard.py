@@ -351,6 +351,8 @@ SLOW_CASES = {
     "openの繰り返し": 'python3 -c "' + "open(" * 200_000 + '"',
     "書き込み風の動詞の繰り返し": "tee " * 200_000,
     "リダイレクト記号の繰り返し": "echo " + ">" * 500_000,
+    "rubyの書き込み風の文字列の繰り返し": 'ruby -e "' + "File.write(" * 200_000 + '"',
+    "rubyのopen(の繰り返し": 'ruby -e "' + "open(" * 200_000 + '"',
     "pythonのheredocでopen(の繰り返し": "python3 - <<'EOF'\n"
     + "open('" * 100_000
     + "\nEOF",
@@ -444,6 +446,36 @@ def test_heredocの書き方のゆれでも本文のあとのコマンドを見�
     ],
 )
 def test_heredocの書き方のゆれでもデータとして書かれるだけなら通す(tmp_path, command):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, command) is None
+
+
+# Red 6（Q9）: python 以外のインタプリタ（ruby、node、perl、php など）は、旧版と同じ粗い判定にとどめる。
+# 旧版が（偶然）拒否していたものを、退行させない。他の言語の丁寧な解析は、将来の拡張。
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ruby -e \"File.write('CLAUDE.md','x')\"",
+        "node -e \"require('fs').createWriteStream('CLAUDE.md').write('x')\"",
+        "perl -e \"open(F,'>CLAUDE.md')\"",
+        "ruby -e \"File.open('.claude/x','w'){|f| f.write('x')}\"",
+    ],
+)
+def test_python以外のインタプリタが保護対象に書くのは拒否する(tmp_path, command):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, command) is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ruby -e \"File.write('specs/a.md','x')\"",
+        "node -e \"console.log('CLAUDE.md')\"",
+    ],
+)
+def test_python以外のインタプリタでも保護パスに書かないなら通す(tmp_path, command):
     root = make_project(tmp_path, {"0001-a": "planned"})
     assert bash(root, command) is None
 
