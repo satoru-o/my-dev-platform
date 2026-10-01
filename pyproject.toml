@@ -36,7 +36,7 @@ select = ["E", "F", "I", "B", "S"]
 
 [tool.pyright]
 include = ["src", "tests"]
-extraPaths = [".claude/hooks"]  # src/base_compare が、guardlib（hookの比較の関数）を使うため
+extraPaths = ["src", ".claude/hooks"]  # base_compare が guardlib（hookの比較の関数）を使うため。extraPaths を書くと src の自動検出が消えるので src も書く
 typeCheckingMode = "standard"
 
 [tool.mutmut]
