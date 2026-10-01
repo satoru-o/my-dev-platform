@@ -4,13 +4,13 @@
 人間の仕事は「具体例を出す」と「選ぶ」だけ。書く作業はAI、確認は機械、という分担を目指しています。
 
 > 先に読むもの: **[docs/retrospective-2026-10.md](docs/retrospective-2026-10.md)**（振り返り）。
-> 現時点では、製品（カートAPI）よりも、それを守る仕組みのほうが大きくなっています。この README は、その現状を、そのまま説明します。
+> **カートAPI は、開発プロセスを試すための実験台にすぎません。成果物は「開発プロセス」です。** 現時点では、そのプロセスを守る仕組み（hook、CI）のほうが、実験台よりずっと大きくなっており、プロセスが「確立した」とはまだ言えません。この README は、その現状を、そのまま説明します。
 
 ## いまの状態（2026-10-01 時点）
 
 | 項目 | 内容 |
 | --- | --- |
-| 製品コード | カートAPI（FastAPI）。「商品を追加する」1機能だけ（`src/cart_api/main.py`、60行。テスト30件） |
+| 実験台 | カートAPI（FastAPI）。プロセスを試すための題材で、製品ではない。「商品を追加する」1機能だけ（`src/cart_api/main.py`、60行。テスト30件） |
 | 開発フロー | 要望（req）→ 質問 → テスト計画 → Red → Green → 完了確認。3つの skill と、`specs/` で動く |
 | 守りの仕組み | 既存のテストを黙って書き換えさせない hook、`origin/main` と比べる CI の検査 |
 | 実験の記録 | mutation testing、監査エージェント、sandbox の実現可能性（`docs/experiments/`） |
@@ -45,9 +45,9 @@ AI が、テストを書き換えたり、規律を回避したりしないよ�
 ├── Makefile                  make test / check / compare ほか
 ├── pyproject.toml            uv、pytest、ruff、pyright の設定
 ├── src/
-│   ├── cart_api/             製品: カートAPI（FastAPI）
+│   ├── cart_api/             実験台: カートAPI（FastAPI。プロセスを試すための題材）
 │   └── base_compare/         道具: origin/main と比べる検査（CI と make compare）
-├── tests/                    製品と base_compare のテスト
+├── tests/                    実験台と base_compare のテスト
 ├── tools/guard-equiv/        道具: hook の判定が基準と同一かを確かめる（1853入力）
 ├── specs/
 │   ├── README.md             運用ルールの正本
@@ -76,7 +76,7 @@ AI が、テストを書き換えたり、規律を回避したりしないよ�
 
 ```bash
 uv sync                # 依存を入れる
-make test              # テスト（製品 + hook のテスト。0件でも成功）
+make test              # テスト（実験台 + hook のテスト。0件でも成功）
 make check             # lint、型、テスト、脆弱性、秘密情報、origin/main との比較
 make compare           # origin/main と比べる検査だけ（ローカルは警告のみ）
 ```
@@ -106,7 +106,7 @@ make compare           # origin/main と比べる検査だけ（ローカルは�
 
 | req | 内容 |
 | --- | --- |
-| 0001 | カートAPI「商品を追加する」＋ mutation testing で見つけた穴の FB |
+| 0001 | 実験台: カートAPI「商品を追加する」＋ mutation testing で見つけた穴の FB（プロセスを、実際に通した、唯一の題材） |
 | 0002〜0003, 0005 | 企画書（CHARTER）の更新 |
 | 0004 | hook の誤検出の修正（heredoc、python の書き込み先、性能） |
 | 0006 | 観点カタログに S-04（別の対象が互いに影響しない）を追加 |
@@ -122,7 +122,7 @@ make compare           # origin/main と比べる検査だけ（ローカルは�
 
 振り返りの提案（詳細は [docs/retrospective-2026-10.md](docs/retrospective-2026-10.md)）:
 
-1. **道具の増築を凍結**し、カートAPIの2つ目の機能を、軽量版のフローで1回作って測る（人間の時間、経過時間、コミット数、質問数）。
+1. **道具の増築を凍結**し、実験台（カートAPI）に2つ目の機能を足す、という題材で、軽くしたプロセスを1回通して測る（人間の時間、経過時間、コミット数、質問数）。目的は機能ではなく、プロセスの測定。
 2. 承認ラベルの安全性のために、`settings.json` の `permissions`（`gh pr create --label` と `gh pr edit` と `gh api` を deny など）だけは小さくやる。
 3. コミット粒度（AC 単位）と、質問の形式（最大3問、推奨を出さない）の見直しを、CLAUDE.md と skills に反映する。
 
