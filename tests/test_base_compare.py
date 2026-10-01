@@ -47,3 +47,23 @@ def test_AC1_テストを足しただけなら緑():
 
     assert report.verdict == "green"
     assert report.findings == []
+
+
+def test_AC1_pytestの設定を変えると赤():
+    change = core.FileChange(
+        path="pyproject.toml",
+        base_src='[tool.pytest.ini_options]\ntestpaths = ["tests"]\n',
+        head_src=(
+            '[tool.pytest.ini_options]\ntestpaths = ["tests"]\naddopts = "-k x"\n'
+        ),
+    )
+
+    report = core.check(
+        changes=[change],
+        base_ids=frozenset(),
+        head_ids=frozenset(),
+        labels=frozenset(),
+    )
+
+    assert report.verdict == "red"
+    assert [f.path for f in report.findings] == ["pyproject.toml"]
