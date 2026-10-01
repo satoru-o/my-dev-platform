@@ -772,6 +772,192 @@ def test_Q11_GIT_DIRを細工しても判定は変わらない(tmp_path, monkeyp
     )
 
 
+# Q5: tests/ の下の既存の Python ファイル（conftest.py、補助モジュール）にも、同じ判定
+
+CONFTEST = "import pytest\n\n\n@pytest.fixture\ndef client():\n    return 1\n"
+
+
+def test_Q5_conftestとtests配下の補助モジュールにも同じ判定をする(tmp_path):
+    root = make_repo(
+        tmp_path,
+        {
+            TEST_X: BASE_TEST,
+            "tests/conftest.py": CONFTEST,
+            "tests/helpers.py": "VALUE = 1\n",
+            "conftest.py": CONFTEST,
+        },
+    )
+    assert change_edit(root, "tests/conftest.py", "return 1", "return 2") is not None
+    assert change_edit(root, "tests/helpers.py", "VALUE = 1", "VALUE = 2") is not None
+    assert change_edit(root, "conftest.py", "return 1", "return 2") is not None
+    # 足すのは自由
+    assert (
+        change_edit(root, "tests/helpers.py", "VALUE = 1\n", "VALUE = 1\nOTHER = 2\n")
+        is None
+    )
+
+
+def test_Q5_Python以外のデータは対象外(tmp_path):
+    root = make_repo(tmp_path, {TEST_X: BASE_TEST, "tests/data.json": '{"a": 1}\n'})
+    assert change_write(root, "tests/data.json", '{"a": 2}\n') is None
+
+
+# Q3: Bash 経由の、既存のテストファイルへの書き込みは、すべて拒否。まだ無いファイルへの書き込みは通す
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sed -i 's/201/200/' tests/test_x.py",
+        "echo x >> tests/test_x.py",
+        "echo x > tests/test_x.py",
+        "cat >> tests/test_x.py <<'EOF'\ndef test_n():\n    assert True\nEOF",
+        "mv tests/test_x.py /tmp/y.py",
+        "rm tests/test_x.py",
+        "tee tests/test_x.py",
+        "python3 -c \"open('tests/test_x.py','a').write('x')\"",
+        "sed -i 's/a/b/' tests/*.py",
+        "echo x >> tests/conftest.py",
+    ],
+)
+def test_Q3_既存のテストファイルへのBash経由の書き込みは拒否する(tmp_path, command):
+    root = make_repo(tmp_path, {TEST_X: BASE_TEST, "tests/conftest.py": CONFTEST})
+    assert bash(root, command) is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo 'def test_n(): pass' > tests/test_new.py",
+        "cat > tests/test_new.py <<'EOF'\ndef test_n():\n    assert True\nEOF",
+        "python3 -c \"open('tests/test_new.py','w').write('x')\"",
+        "cp /tmp/a.py tests/test_new.py",
+    ],
+)
+def test_Q3_まだ無いテストファイルへのBash経由の書き込みは通す(tmp_path, command):
+    root = make_repo(tmp_path)
+    assert bash(root, command) is None
+
+
+def test_Q3_未コミットのファイルは既存ではないので通す(tmp_path):
+    root = make_repo(tmp_path)
+    (root / "tests/test_u.py").write_text(
+        "def test_u():\n    assert True\n", encoding="utf-8"
+    )
+    assert bash(root, "echo x >> tests/test_u.py") is None
+
+
+def test_Q3_Python以外のデータへの書き込みは通す(tmp_path):
+    root = make_repo(tmp_path, {TEST_X: BASE_TEST, "tests/data.json": "{}\n"})
+    assert bash(root, "echo '{}' > tests/data.json") is None
+
+
+def test_Q3_gitが使えないとき_ディスクにあるファイルは拒否_無いファイルは通す(tmp_path):
+    root = make_repo(tmp_path, init=False)
+    assert bash(root, "echo x >> tests/test_x.py") is not None
+    assert bash(root, "echo x > tests/test_new.py") is None
+
+
+# AC-3: 解除のスイッチ（.claude/ALLOW_TEST_CHANGE）は、人間だけが置け、1回で消える
+
+SWITCH_PATH = ".claude/ALLOW_TEST_CHANGE"
+
+
+def place_switch(root: Path) -> Path:
+    p = root / SWITCH_PATH
+    p.parent.mkdir(exist_ok=True)
+    p.write_text("", encoding="utf-8")
+    return p
+
+
+def place_unlock(root: Path) -> None:
+    (root / ".claude").mkdir(exist_ok=True)
+    (root / ".claude/UNLOCK").write_text("", encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "touch .claude/ALLOW_TEST_CHANGE",
+        "echo > .claude/ALLOW_TEST_CHANGE",
+        "cp /tmp/x .claude/ALLOW_TEST_CHANGE",
+        "mv /tmp/x .claude/ALLOW_TEST_CHANGE",
+        "ln -s /tmp/x .claude/ALLOW_TEST_CHANGE",
+        "rm .claude/ALLOW_TEST_CHANGE",
+    ],
+)
+def test_AC3_AIがスイッチを作る_触るのは_UNLOCKがあっても拒否する(tmp_path, command):
+    root = make_repo(tmp_path)
+    place_unlock(root)
+    assert bash(root, command) is not None
+
+
+@pytest.mark.parametrize("tool", ["Write", "Edit"])
+def test_AC3_スイッチをWriteやEditで作るのも_UNLOCKがあっても拒否する(tmp_path, tool):
+    root = make_repo(tmp_path)
+    place_unlock(root)
+    path = str(root / SWITCH_PATH)
+    tool_input = {
+        "file_path": path,
+        "content": "",
+        "old_string": "a",
+        "new_string": "b",
+    }
+    assert guard.decide(tool, tool_input, root) is not None
+
+
+def test_AC3_スイッチがあれば既存テストの変更が通り_通した時点でスイッチが消える(
+    tmp_path,
+):
+    root = make_repo(tmp_path)
+    switch = place_switch(root)
+
+    assert change_edit(root, TEST_X, "    assert f(2) == 3\n", "") is None
+    assert not switch.exists()
+
+
+def test_AC3_スイッチが消えたあとの同じ変更は拒否する(tmp_path):
+    root = make_repo(tmp_path)
+    place_switch(root)
+    assert change_edit(root, TEST_X, "    assert f(2) == 3\n", "") is None
+
+    assert change_edit(root, TEST_X, "    assert f(2) == 3\n", "") is not None
+
+
+def test_AC3_Bash経由の変更もスイッチで通り_スイッチが消える(tmp_path):
+    root = make_repo(tmp_path)
+    switch = place_switch(root)
+
+    assert bash(root, "sed -i 's/201/200/' tests/test_x.py") is None
+    assert not switch.exists()
+
+
+def test_AC3_守る対象に触れない呼び出しでは_スイッチは消えない(tmp_path):
+    root = make_repo(tmp_path)
+    switch = place_switch(root)
+
+    assert bash(root, "git status") is None
+    assert change_edit(root, "docs/x.md", "a", "b") is None
+    assert (
+        change_write(root, "tests/test_new.py", "def test_n():\n    assert True\n")
+        is None
+    )
+    assert switch.exists()
+
+
+def test_AC3_スイッチがなくても通る変更では_何も起きない(tmp_path):
+    root = make_repo(tmp_path)
+    new = APPEND_AFTER + "\n\ndef test_new():\n    assert True\n"
+    assert change_edit(root, TEST_X, APPEND_AFTER, new) is None
+
+
+def test_AC3_スイッチは_redの間のtests書き込み禁止を解かない(tmp_path):
+    root = make_repo(tmp_path, statuses={"0001-a": "red"})
+    switch = place_switch(root)
+    assert change_edit(root, TEST_X, "    assert f(2) == 3\n", "") is not None
+    assert switch.exists()
+
+
 # --- 実際のスクリプトを標準入力で動かす -----------------------------------------
 
 
