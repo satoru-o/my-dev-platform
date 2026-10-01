@@ -2,7 +2,10 @@
 # 外部の action は、コミットSHAで固定する（コメントはタグ）。
 name: check
 
-on: push
+on:
+  push:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
