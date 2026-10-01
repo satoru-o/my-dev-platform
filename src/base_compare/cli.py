@@ -30,3 +30,7 @@ def run(repo, base_ref, labels, mode, collect_ids):
             )
         return 0, f"{head}\n{text}"
     return (0 if result.verdict == "green" else 1), text
+
+
+def make_collector(repo, base_ref):
+    return lambda which: frozenset()  # スタブ（Red 用。わざと誤った値）

@@ -34,6 +34,28 @@ def test_AC6_ローカルでは検出があっても警告だけで成功の終�
     assert "tests/test_a.py" in text
 
 
+def test_AC3_基準のコードと今のコードを実際に収集してIDの集合を作る(tmp_path):
+    make_repo(
+        tmp_path,
+        {
+            "tests/test_a.py": (
+                "def test_a():\n    assert True\n\n\ndef test_b():\n    assert True\n"
+            )
+        },
+    )
+    git(tmp_path, "checkout", "-q", "-b", "work")
+    (tmp_path / "tests/test_a.py").write_text("def test_a():\n    assert True\n")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-q", "-m", "work")
+
+    collector = cli.make_collector(tmp_path, "main")
+
+    assert collector("base") == frozenset(
+        {"tests/test_a.py::test_a", "tests/test_a.py::test_b"}
+    )
+    assert collector("head") == frozenset({"tests/test_a.py::test_a"})
+
+
 def test_AC2_CIでは基準が取れなければツール自身の失敗で失敗の終了コード(tmp_path):
     red_repo(tmp_path)
 
