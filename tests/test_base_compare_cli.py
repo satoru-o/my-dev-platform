@@ -71,6 +71,27 @@ def test_AC5_入口_ラベルが無ければ失敗_あれば成功で承認し�
     assert "承認した内容" in out_approved
 
 
+def test_X04_想定外の例外でも_CIでは失敗_ローカルでは警告_内部情報は出さない(
+    tmp_path, capsys, monkeypatch
+):
+    def boom(*args, **kwargs):
+        raise RuntimeError("秘密のトークン ghp_xxx /home/someone/.ssh")
+
+    monkeypatch.setattr(cli, "run", boom)
+
+    ci = cli.main(["--repo", str(tmp_path), "--mode", "ci"])
+    out_ci = capsys.readouterr().out
+    local = cli.main(["--repo", str(tmp_path), "--mode", "local"])
+    out_local = capsys.readouterr().out
+
+    assert ci == 1
+    assert local == 0
+    for out in (out_ci, out_local):
+        assert "RuntimeError" in out
+        assert "ghp_xxx" not in out
+        assert "/home/someone" not in out
+
+
 def test_AC2_CIでは基準が取れなければツール自身の失敗で失敗の終了コード(tmp_path):
     red_repo(tmp_path)
 

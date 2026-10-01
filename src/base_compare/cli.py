@@ -62,8 +62,15 @@ def main(argv=None):
     parser.add_argument("--labels", default="", help="承認ラベル（カンマ区切り）")
     args = parser.parse_args(argv)
     labels = frozenset(x for x in args.labels.split(",") if x)
-    code, text = run(
-        args.repo, args.base, labels, args.mode, make_collector(args.repo, args.base)
-    )
+    try:
+        code, text = run(
+            args.repo,
+            args.base,
+            labels,
+            args.mode,
+            make_collector(args.repo, args.base),
+        )
+    except Exception:
+        return 0  # スタブ（Red 用。わざと誤った値）
     print(text)
     return code
