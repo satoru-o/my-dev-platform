@@ -1281,6 +1281,193 @@ def test_AC6_スイッチがあればreq_mdの変更が通り_スイッチが消
     assert not switch.exists()
 
 
+# V-04（0007）: 巨大な入力でも、2秒以内に判定する（git の呼び出しや、ファイルの解析が増えたため）
+
+_CHILD_JSON = (
+    "import json, sys, time\n"
+    "from pathlib import Path\n"
+    "sys.dont_write_bytecode = True\n"
+    f"sys.path.insert(0, {str(GUARD.parent)!r})\n"
+    "import guard\n"
+    "payload = json.load(sys.stdin)\n"
+    "start = time.perf_counter()\n"
+    "guard.decide(payload['tool'], payload['input'], Path(sys.argv[1]))\n"
+    "print(time.perf_counter() - start)\n"
+)
+
+
+def decide_seconds_for(root: Path, tool: str, tool_input: dict) -> float | None:
+    """Edit・Write・Bash の判定にかかった秒数。上限を超えたら None（別プロセスで、上限で打ち切る）。"""
+    try:
+        done = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", _CHILD_JSON, str(root)],
+            input=json.dumps({"tool": tool, "input": tool_input}),
+            capture_output=True,
+            text=True,
+            timeout=TIME_LIMIT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    return float(done.stdout)
+
+
+def _many_tests(n: int) -> str:
+    return "".join(f"\n\ndef test_n{i}():\n    assert {i} == {i}\n" for i in range(n))
+
+
+def _big_req(n: int) -> str:
+    rows = "".join(f"| in{i} | out{i} | [人] |\n" for i in range(n))
+    return REQ_MD.replace("| a | 201 | [人] |\n", "| a | 201 | [人] |\n" + rows)
+
+
+SLOW_CHANGE_CASES = {
+    "数MBのテストの追加（Write）": lambda root: (
+        "Write",
+        {"file_path": str(root / TEST_X), "content": BASE_TEST + _many_tests(60_000)},
+    ),
+    "数MBのテストの追加（Edit）": lambda root: (
+        "Edit",
+        {
+            "file_path": str(root / TEST_X),
+            "old_string": APPEND_AFTER,
+            "new_string": APPEND_AFTER + _many_tests(60_000),
+        },
+    ),
+    "巨大な req.md の書き換え": lambda root: (
+        "Write",
+        {
+            "file_path": str(root / REQ),
+            "content": _big_req(30_000).replace("| b | 422 |", "| b | 200 |"),
+        },
+    ),
+    "同じパスを大量に並べた Bash": lambda root: (
+        "Bash",
+        {"command": "sed -i x " + "tests/test_x.py " * 200_000},
+    ),
+    "異なるパスを大量に並べた Bash": lambda root: (
+        "Bash",
+        {"command": "".join(f"echo x > tests/t{i}.py\n" for i in range(50_000))},
+    ),
+    "1行に git が大量": lambda root: ("Bash", {"command": "git status; " * 100_000}),
+    "git が大量の行": lambda root: ("Bash", {"command": "git status\n" * 100_000}),
+    "git restore に大量のパス": lambda root: (
+        "Bash",
+        {"command": "git restore " + " ".join(f"src/f{i}.py" for i in range(100_000))},
+    ),
+}
+
+
+@pytest.mark.parametrize("name", list(SLOW_CHANGE_CASES))
+def test_V04_テストの変更の判定も_巨大な入力で時間内に終わる(tmp_path, name):
+    files = {TEST_X: BASE_TEST, REQ: REQ_MD}
+    root = make_repo(tmp_path, files)
+    tool, tool_input = SLOW_CHANGE_CASES[name](root)
+
+    elapsed = decide_seconds_for(root, tool, tool_input)
+
+    assert elapsed is not None, f"{name}: {TIME_LIMIT_SECONDS}秒以内に終わらなかった"
+
+
+def test_V04_HEADが巨大なテストファイルへの小さな追加も時間内に終わる(tmp_path):
+    root = make_repo(tmp_path, {TEST_X: BASE_TEST + _many_tests(60_000)})
+    new = APPEND_AFTER + "\n\ndef test_small():\n    assert True\n"
+    tool_input = {
+        "file_path": str(root / TEST_X),
+        "old_string": APPEND_AFTER,
+        "new_string": new,
+    }
+
+    elapsed = decide_seconds_for(root, "Edit", tool_input)
+
+    assert elapsed is not None, f"{TIME_LIMIT_SECONDS}秒以内に終わらなかった"
+
+
+# X-03 / V-03（0007）: パスの別の書き方、日本語・絵文字・CRLF
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "./tests/test_x.py",
+        "tests/../tests/test_x.py",
+        "tests//test_x.py",
+        "src/../tests/test_x.py",
+    ],
+)
+def test_X03_パスの別の書き方でも同じ判定をする(tmp_path, path):
+    root = make_repo(tmp_path)
+    assert change_edit(root, path, "    assert f(2) == 3\n", "") is not None
+    assert bash(root, f"sed -i 's/a/b/' {path}") is not None
+    assert (
+        change_edit(
+            root,
+            path,
+            APPEND_AFTER,
+            APPEND_AFTER + "\n\ndef test_n():\n    assert True\n",
+        )
+        is None
+    )
+
+
+def test_X03_絶対パスでも同じ判定をする(tmp_path):
+    root = make_repo(tmp_path)
+    absolute = str(root / TEST_X)
+    assert change_edit(root, absolute, "    assert f(2) == 3\n", "") is not None
+    assert bash(root, f"echo x >> {absolute}") is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo $(sed -i 's/a/b/' tests/test_x.py)",
+        "echo `sed -i 's/a/b/' tests/test_x.py`",
+        "true && sed -i 's/a/b/' tests/test_x.py",
+        "cd tests && sed -i 's/a/b/' test_x.py; true",
+    ],
+)
+def test_X03_コマンド置換や連結の中の書き込みも拒否する(tmp_path, command):
+    root = make_repo(tmp_path)
+    assert bash(root, command) is not None
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".claude/./ALLOW_TEST_CHANGE",
+        ".claude//ALLOW_TEST_CHANGE",
+        "src/../.claude/ALLOW_TEST_CHANGE",
+    ],
+)
+def test_X03_スイッチのパスの別の書き方でも_AIは作れない(tmp_path, path):
+    root = make_repo(tmp_path)
+    place_unlock(root)
+    assert (
+        guard.decide("Write", {"file_path": str(root / path), "content": ""}, root)
+        is not None
+    )
+    assert bash(root, f"touch {path}") is not None
+
+
+JA_TEST = "def test_日本語の名前():\n    assert f(1) == 2\n    assert f('🍎') == 3\n"
+
+
+def test_V03_日本語と絵文字のテストにも同じ判定をする(tmp_path):
+    root = make_repo(tmp_path, {TEST_X: JA_TEST})
+    assert change_edit(root, TEST_X, "    assert f('🍎') == 3\n", "") is not None
+    assert change_edit(root, TEST_X, "== 3", "== 4") is not None
+    new = "    assert f('🍎') == 3\n\n\ndef test_足す():\n    assert '🍎'\n"
+    assert change_edit(root, TEST_X, "    assert f('🍎') == 3\n", new) is None
+
+
+def test_V03_CRLF改行のファイルにも同じ判定をする(tmp_path):
+    crlf = BASE_TEST.replace("\n", "\r\n")
+    root = make_repo(tmp_path, {TEST_X: crlf})
+    assert change_edit(root, TEST_X, "    assert f(2) == 3\r\n", "") is not None
+    appended = "        assert True\r\n\r\n\r\ndef test_n():\r\n    assert True\r\n"
+    assert change_edit(root, TEST_X, "        assert True\r\n", appended) is None
+
+
 # --- 実際のスクリプトを標準入力で動かす -----------------------------------------
 
 
