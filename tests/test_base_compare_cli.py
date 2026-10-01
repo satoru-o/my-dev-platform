@@ -22,3 +22,13 @@ def test_AC6_CIでは検出があれば失敗の終了コードになる(tmp_pat
 
     assert code == 1
     assert "tests/test_a.py" in text
+
+
+def test_AC6_ローカルでは検出があっても警告だけで成功の終了コード(tmp_path):
+    red_repo(tmp_path)
+
+    code, text = cli.run(tmp_path, "main", frozenset(), "local", no_ids)
+
+    assert code == 0
+    assert "警告" in text
+    assert "tests/test_a.py" in text
