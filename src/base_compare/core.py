@@ -13,7 +13,7 @@ _HOOKS = Path(__file__).resolve().parents[2] / ".claude" / "hooks"
 if str(_HOOKS) not in sys.path:
     sys.path.insert(0, str(_HOOKS))
 
-from guardlib.compare import change_reason_for  # noqa: E402
+from guardlib.compare import change_reason_for, compare_kind  # noqa: E402, F401
 
 # 守りの仕組み自体（これらの変更は、テストの変更とは別に、承認が要る）
 GUARD_PATHS = (
@@ -69,7 +69,7 @@ def _kind_of(reason: str) -> str:
     return "検出"
 
 
-def _is_guard_path(path: str) -> bool:
+def is_guard_path(path: str) -> bool:
     return any(path == g or path.startswith(g) for g in GUARD_PATHS)
 
 
@@ -77,7 +77,7 @@ def check(changes, base_ids, head_ids, labels, tool_errors=()) -> Report:
     findings = []
     errors = list(tool_errors)
     for change in changes:
-        if _is_guard_path(change.path):
+        if is_guard_path(change.path):
             findings.append(
                 Finding(
                     path=change.path,
