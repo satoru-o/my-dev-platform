@@ -163,6 +163,25 @@ def test_AC2_ツール自身の失敗は承認ラベルがあっても赤():
     assert report.errors == ["テストの収集が時間内に終わらない"]
 
 
+def test_AC2_比較の関数が例外を投げたら承認ラベルがあっても赤():
+    change = core.FileChange(
+        path="pyproject.toml",
+        base_src='[tool.pytest.ini_options]\ntestpaths = ["tests"]\n',
+        head_src="tool = 1\n",
+    )
+
+    report = core.check(
+        changes=[change],
+        base_ids=frozenset(),
+        head_ids=frozenset(),
+        labels=frozenset({"test-change-approved", "guard-change-approved"}),
+    )
+
+    assert report.verdict == "red"
+    assert len(report.errors) == 1
+    assert "pyproject.toml" in report.errors[0]
+
+
 def test_AC1_pytestの設定を変えると赤():
     change = core.FileChange(
         path="pyproject.toml",

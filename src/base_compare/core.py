@@ -73,7 +73,10 @@ def check(changes, base_ids, head_ids, labels, tool_errors=()) -> Report:
             continue
         if change.base_src is None or change.head_src is None:
             continue
-        reason = change_reason_for(change.path, change.base_src, change.head_src)
+        try:
+            reason = change_reason_for(change.path, change.base_src, change.head_src)
+        except Exception:  # スタブ（Red 用。わざと握りつぶす）
+            reason = None
         if reason:
             findings.append(Finding(path=change.path, reason=reason))
     for lost in sorted(base_ids - head_ids):
