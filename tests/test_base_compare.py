@@ -226,6 +226,21 @@ def test_AC2_巨大で比較できないファイルは承認ラベルがあっ�
     assert [f.kind for f in report.findings] == ["比較できない"]
 
 
+def test_AC2_知らない形の理由は比較できないとして承認ラベルがあっても赤(monkeypatch):
+    monkeypatch.setattr(core, "change_reason_for", lambda *a: "未知の理由")
+    change = core.FileChange(path="tests/test_a.py", base_src="a\n", head_src="b\n")
+
+    report = core.check(
+        changes=[change],
+        base_ids=frozenset(),
+        head_ids=frozenset(),
+        labels=frozenset({"test-change-approved", "guard-change-approved"}),
+    )
+
+    assert report.verdict == "red"
+    assert [f.kind for f in report.findings] == ["比較できない"]
+
+
 def test_AC1_pytestの設定を変えると赤():
     change = core.FileChange(
         path="pyproject.toml",
