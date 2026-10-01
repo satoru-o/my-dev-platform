@@ -1061,6 +1061,226 @@ def test_AC4_いつも使う無害なgit操作は通す(tmp_path, command):
     assert bash(root, command) is None
 
 
+# AC-5: pytest の設定の変更は、承認が要る（足す・消す・変えるの区別なし）
+
+PYPROJECT = """[project]
+name = "x"
+
+[tool.pytest.ini_options]
+testpaths = ["tests", ".claude/hooks"]
+addopts = "-q"
+markers = ["a: b"]
+
+[tool.ruff]
+line-length = 88
+"""
+PYTEST_INI = "[pytest]\naddopts = -q\n"
+TOX_INI = "[tox]\nenvlist = py\n\n[pytest]\naddopts = -q\n"
+SETUP_CFG = "[metadata]\nname = x\n\n[tool:pytest]\naddopts = -q\n"
+
+
+def make_config_repo(tmp_path: Path) -> Path:
+    files = {
+        TEST_X: BASE_TEST,
+        "pyproject.toml": PYPROJECT,
+        "pytest.ini": PYTEST_INI,
+        "tox.ini": TOX_INI,
+        "setup.cfg": SETUP_CFG,
+        "tests/conftest.py": CONFTEST,
+    }
+    return make_repo(tmp_path, files)
+
+
+@pytest.mark.parametrize(
+    ("rel", "old", "new"),
+    [
+        ("pyproject.toml", 'addopts = "-q"', "addopts = \"-q -k 'not slow'\""),
+        (
+            "pyproject.toml",
+            'testpaths = ["tests", ".claude/hooks"]',
+            'testpaths = ["tests"]',
+        ),
+        ("pyproject.toml", 'markers = ["a: b"]', 'markers = ["a: b", "c: d"]'),
+        ("pyproject.toml", 'addopts = "-q"\n', ""),
+        ("pytest.ini", "addopts = -q", "addopts = -q --deselect x"),
+        ("tox.ini", "[pytest]\naddopts = -q", "[pytest]\naddopts = -q -k nothing"),
+        (
+            "setup.cfg",
+            "[tool:pytest]\naddopts = -q",
+            "[tool:pytest]\naddopts = -q -k nothing",
+        ),
+    ],
+)
+def test_AC5_pytestの設定の変更は拒否する(tmp_path, rel, old, new):
+    root = make_config_repo(tmp_path)
+    assert change_edit(root, rel, old, new) is not None
+
+
+@pytest.mark.parametrize(
+    ("rel", "old", "new"),
+    [
+        ("pyproject.toml", "line-length = 88", "line-length = 100"),
+        ("pyproject.toml", 'name = "x"', 'name = "y"'),
+        ("tox.ini", "envlist = py", "envlist = py,lint"),
+        ("setup.cfg", "name = x", "name = y"),
+    ],
+)
+def test_AC5_pytestの設定でない部分の変更は通す(tmp_path, rel, old, new):
+    root = make_config_repo(tmp_path)
+    assert change_edit(root, rel, old, new) is None
+
+
+def test_AC5_pyprojectからpytestの節を消す置き換えは拒否する(tmp_path):
+    root = make_config_repo(tmp_path)
+    assert change_write(root, "pyproject.toml", '[project]\nname = "x"\n') is not None
+
+
+def test_AC5_構文エラーになる設定の変更は拒否する(tmp_path):
+    root = make_config_repo(tmp_path)
+    assert change_edit(root, "pyproject.toml", 'name = "x"', 'name = "x') is not None
+
+
+@pytest.mark.parametrize(
+    "appended",
+    [
+        '\ncollect_ignore = ["test_x.py"]\n',
+        '\ncollect_ignore_glob = ["*.py"]\n',
+        "\ndef pytest_collection_modifyitems(items):\n    items.clear()\n",
+        "\ndef pytest_ignore_collect(collection_path):\n    return True\n",
+    ],
+)
+def test_AC5_conftestに_テストを外す設定を足すのは拒否する(tmp_path, appended):
+    root = make_config_repo(tmp_path)
+    old = "    return 1\n"
+    assert change_edit(root, "tests/conftest.py", old, old + appended) is not None
+
+
+def test_AC5_conftestにfixtureを足すのは通す(tmp_path):
+    root = make_config_repo(tmp_path)
+    old = "    return 1\n"
+    new = old + "\n\n@pytest.fixture\ndef other():\n    return 2\n"
+    assert change_edit(root, "tests/conftest.py", old, new) is None
+
+
+def test_AC5_Bash経由の設定ファイルへの書き込みは拒否する(tmp_path):
+    root = make_config_repo(tmp_path)
+    assert bash(root, "sed -i 's/88/100/' pyproject.toml") is not None
+    assert bash(root, "echo x >> pytest.ini") is not None
+
+
+def test_AC5_スイッチがあれば設定の変更が通り_スイッチが消える(tmp_path):
+    root = make_config_repo(tmp_path)
+    switch = place_switch(root)
+    assert change_edit(root, "pyproject.toml", 'addopts = "-q"\n', "") is None
+    assert not switch.exists()
+
+
+# AC-6: 実装中（planned / red / green）は、req.md の AC の表の既存の行を、黙って変えさせない
+
+REQ_MD = """# 0001 a
+
+## 受け入れ条件
+
+### AC-1 foo
+
+| 入力 | 期待される出力 | 出典 |
+| --- | --- | --- |
+| a | 201 | [人] |
+| b | 422 | [人] |
+
+### AC-2 bar
+
+| 入力 | 期待される出力 |
+| --- | --- |
+| c | 200 |
+
+## やらないこと
+- x
+"""
+REQ = "specs/0001-a/req.md"
+
+
+@pytest.mark.parametrize("status", ["planned", "red", "green"])
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("| b | 422 | [人] |\n", "| b | 200 | [人] |\n"),  # 期待値を変える
+        ("| b | 422 | [人] |\n", ""),  # 行を消す
+        ("### AC-2 bar", "### AC-3 bar"),  # AC 番号の書き換え（削除と追加として扱う）
+        ("| c | 200 |\n", "| c | 201 |\n"),
+    ],
+)
+def test_AC6_実装中のreq_mdのACの既存の行の変更_削除は拒否する(
+    tmp_path, status, old, new
+):
+    root = make_repo(
+        tmp_path, {TEST_X: BASE_TEST, REQ: REQ_MD}, statuses={"0001-a": status}
+    )
+    assert change_edit(root, REQ, old, new) is not None
+
+
+def test_AC6_実装中でもACの表に新しい行や新しいACを足すのは通す(tmp_path):
+    root = make_repo(tmp_path, {TEST_X: BASE_TEST, REQ: REQ_MD})
+    assert (
+        change_edit(
+            root,
+            REQ,
+            "| b | 422 | [人] |\n",
+            "| b | 422 | [人] |\n| d | 404 | [案→承認] |\n",
+        )
+        is None
+    )
+    new_ac = "\n### AC-3 baz\n\n| 入力 | 期待される出力 |\n| --- | --- |\n| e | 200 |\n"
+    assert (
+        change_edit(root, REQ, "## やらないこと", new_ac + "\n## やらないこと") is None
+    )
+
+
+def test_AC6_実装中でもAC以外の文章の変更は通す(tmp_path):
+    root = make_repo(tmp_path, {TEST_X: BASE_TEST, REQ: REQ_MD})
+    assert change_edit(root, REQ, "- x\n", "- x\n- y\n") is None
+    assert change_edit(root, REQ, "### AC-1 foo", "### AC-1 fooの見出しを直す") is None
+
+
+@pytest.mark.parametrize("status", ["draft", "clarifying", "done"])
+def test_AC6_実装中でなければreq_mdのACの表を変えてよい(tmp_path, status):
+    root = make_repo(
+        tmp_path, {TEST_X: BASE_TEST, REQ: REQ_MD}, statuses={"0001-a": status}
+    )
+    assert (
+        change_edit(root, REQ, "| b | 422 | [人] |\n", "| b | 200 | [人] |\n") is None
+    )
+
+
+def test_AC6_別のreqの状態は影響しない(tmp_path):
+    req_b = REQ_MD.replace("0001 a", "0002 b")
+    files = {TEST_X: BASE_TEST, REQ: REQ_MD, "specs/0002-b/req.md": req_b}
+    root = make_repo(tmp_path, files, statuses={"0001-a": "planned", "0002-b": "done"})
+    old, new = "| b | 422 | [人] |\n", "| b | 200 | [人] |\n"
+    assert change_edit(root, "specs/0002-b/req.md", old, new) is None
+    assert change_edit(root, REQ, old, new) is not None
+
+
+def test_AC6_HEADに無い新しいreq_mdは自由に書ける(tmp_path):
+    root = make_repo(tmp_path)
+    assert change_write(root, "specs/0001-a/req.md", REQ_MD) is None
+
+
+def test_AC6_Bash経由の実装中のreq_mdへの書き込みは拒否する(tmp_path):
+    root = make_repo(tmp_path, {TEST_X: BASE_TEST, REQ: REQ_MD})
+    assert bash(root, "sed -i 's/422/200/' specs/0001-a/req.md") is not None
+    assert bash(root, "git restore specs/0001-a/req.md") is not None
+
+
+def test_AC6_スイッチがあればreq_mdの変更が通り_スイッチが消える(tmp_path):
+    root = make_repo(tmp_path, {TEST_X: BASE_TEST, REQ: REQ_MD})
+    switch = place_switch(root)
+    assert (
+        change_edit(root, REQ, "| b | 422 | [人] |\n", "| b | 200 | [人] |\n") is None
+    )
+    assert not switch.exists()
+
+
 # --- 実際のスクリプトを標準入力で動かす -----------------------------------------
 
 
