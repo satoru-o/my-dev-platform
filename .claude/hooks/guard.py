@@ -123,6 +123,7 @@ class Heredoc:
     """heredoc 1つ分。body は本文（終了行は含まない）。"""
 
     receiver: str  # `<<` を含む1行。受け取るコマンドの判定に使う
+    pos: int  # receiver の中の `<<` の位置
     body: str
 
 
@@ -150,8 +151,49 @@ def split_heredocs(command: str) -> tuple[str, list[Heredoc]]:
                 if (cur.lstrip("\t") if dash else cur) == delim:
                     break
                 body.append(cur)
-            docs.append(Heredoc(receiver=line, body="\n".join(body)))
+            docs.append(Heredoc(receiver=line, pos=m.start(), body="\n".join(body)))
     return "\n".join(shell), docs
+
+
+# データとして受け取るだけのコマンド。これ以外（bash、python、不明なもの）は、本文を実行するものとして扱う。
+DATA_RECEIVERS = {"cat", "tee", "head", "tail", "wc", "sort", "uniq", "grep", "diff"}
+DATA_GIT_SUBCOMMANDS = {"commit", "tag"}  # `git commit -F -` のメッセージなど
+_SEP_RE = re.compile(r";|&&|\|\||&")
+_WRAPPERS = {"sudo", "env", "exec", "time", "nohup", "command", "builtin"}
+
+
+def _segment(line: str, pos: int) -> str:
+    """line のうち、pos を含む1つのコマンド列（`;` `&&` `||` `&` の区切りの間）。"""
+    start = 0
+    for m in _SEP_RE.finditer(line):
+        if m.end() <= pos:
+            start = m.end()
+        elif m.start() >= pos:
+            return line[start : m.start()]
+    return line[start:]
+
+
+def _is_data_command(command: str) -> bool:
+    words = command.split()
+    while words and (re.fullmatch(r"\w+=\S*", words[0]) or words[0] in _WRAPPERS):
+        words.pop(0)
+    if not words:
+        return False
+    name = posixpath.basename(words[0])
+    if name == "git":
+        rest = [w for w in words[1:] if not w.startswith("-")]
+        return bool(rest) and rest[0] in DATA_GIT_SUBCOMMANDS
+    return name in DATA_RECEIVERS
+
+
+def receives_data_only(doc: Heredoc) -> bool:
+    """heredoc の本文が、実行されず、データとして書かれるだけか。
+
+    `<<` を含むコマンド列の、パイプでつながったすべてのコマンドが、データを受けるだけのものであること。
+    判定できなければ（知らないコマンドがあれば）、実行されるものとして扱う（安全側）。
+    """
+    commands = _segment(doc.receiver, doc.pos).split("|")
+    return all(_is_data_command(c) for c in commands)
 
 
 # --- Bash: python の書き込み先の判定 -------------------------------------------
@@ -240,8 +282,8 @@ def bash_kinds(command: str, root: Path) -> list[str]:
     for d in docs:
         if PYTHON_WORD_RE.search(d.receiver):
             kinds |= python_kinds(d.body, root)  # python の本文は、書き込み先で判定する
-        else:
-            shell += "\n" + d.body  # 今までどおり、本文も調べる
+        elif not receives_data_only(d):
+            shell += "\n" + d.body  # 実行されうる本文は、シェルのコマンドとして調べる
     kinds |= set(_legacy_kinds(shell))
     return [k for k in PATH_RE if k in kinds]
 
