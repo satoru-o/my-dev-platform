@@ -26,6 +26,24 @@ def test_AC3_ディレクトリで実際に収集して_IDの集合を返す(tmp
     )
 
 
+def test_V04_収集が時間内に終わらなければツール自身の失敗(tmp_path):
+    from base_compare import gitio
+
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_slow.py").write_text(
+        "import time\n\ntime.sleep(30)\n\n\ndef test_x():\n    assert True\n"
+    )
+
+    try:
+        collect.collect_in(tmp_path, timeout=1.0)
+    except gitio.ToolError:
+        raised = True
+    else:
+        raised = False
+
+    assert raised
+
+
 def test_S03_同じコードを2回収集して同じなら_そのIDの集合を返す():
     calls = []
 

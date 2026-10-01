@@ -23,19 +23,22 @@ def stable_ids(collect_once) -> frozenset[str]:
 
 def collect_in(directory, timeout: float = 300.0) -> frozenset[str]:
     """`pytest --collect-only` で収集し、IDの集合を返す。"""
-    done = subprocess.run(  # noqa: S603
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "--collect-only",
-            "-q",
-            "-p",
-            "no:cacheprovider",
-        ],
-        cwd=directory,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
+    try:
+        done = subprocess.run(  # noqa: S603
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "--collect-only",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+            ],
+            cwd=directory,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return frozenset()  # スタブ（Red 用。わざと誤った値）
     return parse_ids(done.stdout.decode("utf-8", "replace"))
