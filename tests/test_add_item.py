@@ -124,3 +124,29 @@ def test_X04_422のエラー本文はcodeとmessageだけ(payload):
     body = res.json()
     assert set(body.keys()) == {"error"}
     assert set(body["error"].keys()) == {"code", "message"}
+
+
+def test_AC3_別のカートの中身は混ざらない():
+    client = TestClient(create_app())
+    client.post("/carts/c1/items", json={"product_id": "p1", "quantity": 2})
+
+    res = client.post("/carts/c2/items", json={"product_id": "p2", "quantity": 1})
+
+    assert res.status_code == 201
+    assert res.json() == {
+        "cart_id": "c2",
+        "items": [{"product_id": "p2", "quantity": 1}],
+    }
+
+
+def test_AC3_別のカートの同じ商品の数量は合算されない():
+    client = TestClient(create_app())
+    client.post("/carts/c1/items", json={"product_id": "p1", "quantity": 2})
+
+    res = client.post("/carts/c2/items", json={"product_id": "p1", "quantity": 3})
+
+    assert res.status_code == 201
+    assert res.json() == {
+        "cart_id": "c2",
+        "items": [{"product_id": "p1", "quantity": 3}],
+    }
