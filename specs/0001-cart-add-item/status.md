@@ -1,7 +1,7 @@
 ---
 id: 0001
 slug: cart-add-item
-status: done # draft | clarifying | planned | red | green | done
+status: clarifying # draft | clarifying | planned | red | green | done
 size: S1 # AI暫定・要確認
 risk: [] # 価格計算は範囲外のため、リスクタグなし（AI暫定・要確認）
 ---
@@ -9,7 +9,7 @@ risk: [] # 価格計算は範囲外のため、リスクタグなし（AI暫定�
 # 0001 cart-add-item の状態
 
 ## いま
-done（G3で人間が確認済み）。変更は /req-fb（FB）で。
+FB 2（mutation 実験で見つかったテストの穴、エラーの code の契約）で、done から戻した。G1待ち。`discussion-log.md` の Round 3（Q9〜Q12）に回答してください。未回答は推奨で進みます。
 
 ## 結果
 （done時に人間が確認して確定）
