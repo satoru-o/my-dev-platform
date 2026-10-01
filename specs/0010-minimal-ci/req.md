@@ -17,7 +17,10 @@ push時に make check を回すだけのGitHub Actionsを足す。あとで AST�
 GitHub Actions が使う外部の action と、取得元。AI の案で、取得内容は要約（実際の確認は `/req-run` で行い、URL とコミットSHAを書く）。
 - `actions/checkout`: <https://github.com/actions/checkout>
 - `astral-sh/setup-uv`: <https://github.com/astral-sh/setup-uv>
-- [ ] 上の取得元と、SHA固定で使うことを確認した
+- 採用するタグとコミットSHA（`git ls-remote` で取得。2026-10-01。どちらも軽量タグで、タグのSHAがそのままコミットSHA）
+  - `actions/checkout` v6.1.0 = `d23441a48e516b6c34aea4fa41551a30e30af803`
+  - `astral-sh/setup-uv` v10.2.0 = `c18668ad3cf93ea998bef934396af7bb5c839dc7`
+- [X] 上の取得元と、SHA固定で使うことを確認した
 
 ## やらないこと
 （暫定・要確認）
