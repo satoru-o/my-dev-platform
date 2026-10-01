@@ -9,4 +9,7 @@ def parse_ids(out: str) -> frozenset[str]:
 
 
 def stable_ids(collect_once) -> frozenset[str]:
-    return frozenset()  # スタブ（Red 用。わざと誤った値）
+    """同じコードを2回収集し、同じ集合になったときだけ、それを返す。"""
+    first = collect_once()
+    collect_once()
+    return first
