@@ -56,6 +56,21 @@ def test_AC3_基準のコードと今のコードを実際に収集してIDの�
     assert collector("head") == frozenset({"tests/test_a.py::test_a"})
 
 
+def test_AC5_入口_ラベルが無ければ失敗_あれば成功で承認した内容を表示(tmp_path, capsys):
+    red_repo(tmp_path)
+    base = ["--repo", str(tmp_path), "--base", "main", "--mode", "ci"]
+
+    without = cli.main(base)
+    out_without = capsys.readouterr().out
+    approved = cli.main([*base, "--labels", "test-change-approved"])
+    out_approved = capsys.readouterr().out
+
+    assert without == 1
+    assert "承認されていない検出" in out_without
+    assert approved == 0
+    assert "承認した内容" in out_approved
+
+
 def test_AC2_CIでは基準が取れなければツール自身の失敗で失敗の終了コード(tmp_path):
     red_repo(tmp_path)
 

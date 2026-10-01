@@ -51,3 +51,7 @@ def make_collector(repo, base_ref):
                 gitio.run_git(repo, "worktree", "remove", "--force", str(work))
 
     return collector
+
+
+def main(argv=None):
+    return 0  # スタブ（Red 用。わざと誤った値）
