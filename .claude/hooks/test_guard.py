@@ -958,6 +958,109 @@ def test_AC3_スイッチは_redの間のtests書き込み禁止を解かない(
     assert switch.exists()
 
 
+# AC-4: HEAD を動かす・書き換える git 操作、ファイルを別の内容に戻す git 操作
+
+HISTORY_COMMANDS = [
+    "git commit --amend",
+    "git commit --amend -m x",
+    "git rebase main",
+    "git rebase -i HEAD~3",
+    "git reset --hard",
+    "git reset --hard HEAD~1",
+    "git reset --soft HEAD~1",
+    "git reset --mixed abc123",
+    "git reset HEAD~2",
+    "git -C . reset --hard",
+    "git --git-dir=.git reset --hard",
+    "git -c core.editor=true commit --amend",
+    "echo hi && git reset --hard",
+    "git status\ngit reset --hard",
+    "true | git rebase main",
+]
+
+
+@pytest.mark.parametrize("command", HISTORY_COMMANDS)
+def test_AC4_履歴を動かす_書き換えるgit操作は常に拒否する(tmp_path, command):
+    root = make_repo(tmp_path)
+    assert bash(root, command) is not None
+
+
+def test_AC4_履歴を動かす操作は_スイッチがあっても拒否し_スイッチは消えない(tmp_path):
+    root = make_repo(tmp_path)
+    switch = place_switch(root)
+    assert bash(root, "git reset --hard HEAD~1") is not None
+    assert switch.exists()
+
+
+RESTORE_COMMANDS = [
+    "git checkout HEAD~1 -- tests/test_x.py",
+    "git checkout -- tests/test_x.py",
+    "git checkout main -- tests",
+    "git restore tests/test_x.py",
+    "git restore --source=HEAD~1 tests/test_x.py",
+    "git restore --source HEAD~1 tests/",
+    "git restore -s HEAD~1 tests/test_x.py",
+    "git restore .",
+    "git checkout -- .",
+    "git restore tests/*.py",
+    "git rm tests/test_x.py",
+    "git mv tests/test_x.py tests/test_y.py",
+    "git restore conftest.py",
+    "git checkout HEAD~1 -- pyproject.toml",
+]
+
+
+@pytest.mark.parametrize("command", RESTORE_COMMANDS)
+def test_AC4_守る対象のファイルを戻す_消すgit操作は拒否する(tmp_path, command):
+    root = make_repo(
+        tmp_path,
+        {
+            TEST_X: BASE_TEST,
+            "conftest.py": CONFTEST,
+            "pyproject.toml": "[project]\nname = 'x'\n",
+        },
+    )
+    assert bash(root, command) is not None
+
+
+def test_AC4_ファイルを戻す操作は_スイッチがあれば通り_スイッチが消える(tmp_path):
+    root = make_repo(tmp_path)
+    switch = place_switch(root)
+    assert bash(root, "git checkout HEAD~1 -- tests/test_x.py") is None
+    assert not switch.exists()
+
+
+ALLOWED_GIT_COMMANDS = [
+    "git add -A",
+    "git add tests/test_x.py",
+    "git commit -m 'msg'",
+    "git commit -q -m 'git reset --hard は危険'",
+    "echo 'git reset --hard'",
+    "git checkout main",
+    "git checkout -b feat/x",
+    "git checkout -B feat/x",
+    "git reset",
+    "git reset -q",
+    "git reset HEAD",
+    "git reset -- tests/test_x.py",
+    "git reset tests/test_x.py",
+    "git status",
+    "git diff",
+    "git log --oneline",
+    "git checkout HEAD~1 -- src/x.py",
+    "git restore src/x.py",
+    "git restore --staged tests/test_x.py",
+    "git stash",
+    "git push",
+]
+
+
+@pytest.mark.parametrize("command", ALLOWED_GIT_COMMANDS)
+def test_AC4_いつも使う無害なgit操作は通す(tmp_path, command):
+    root = make_repo(tmp_path)
+    assert bash(root, command) is None
+
+
 # --- 実際のスクリプトを標準入力で動かす -----------------------------------------
 
 
