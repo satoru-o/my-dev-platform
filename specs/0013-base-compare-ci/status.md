@@ -10,7 +10,7 @@ risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除
 # 0013 base-compare-ci の状態
 
 ## いま
-green（実装は一通り終わった）。G3 の前に、人間にお願いしたいことが2つある。(1) `! touch .claude/ALLOW_TEST_CHANGE`（`tests/test_base_compare_cli.py` の import の並び順を1行直すため。lint が1件落ちている。下の「気づき」1）。(2) GitHub 上の動作確認（push して PR を開き、ラベルの動きを見る。下の「確認していないこと」）。そのあと、done にしてよいか返してください。UNLOCK は、外してかまいません。
+green。GitHub 上の動作確認も済んだ（下の「GitHub 上で確認したこと」）。G3 待ち: done にしてよいか返してください。気づき2（構文エラーは CI では承認で通せない）の扱いも、判断してください。UNLOCK は、外してかまいません。
 
 ## 結果
 
@@ -35,7 +35,14 @@ green（実装は一通り終わった）。G3 の前に、人間にお願いし
 6. このブランチ自身が、守りの仕組み（`.github/**`、`Makefile`、`.claude/**`、`tools/guard-equiv/**`）を変えている。PR を開くと、`guard-change-approved` が要る（検査の最初の実例になる）。
 7. ローカルの `origin/main` が古い（0011・0012 を push していない）ので、`make compare` は、その分も警告に出す。push すれば出なくなる。
 
-### 確認していないこと（GitHub 上でしか確かめられない）
-- Actions 上の動作: `unlabel` → `compare` の順序、ラベルを API で読めること、ラベルを付けた・外したときの再実行、新しいコミットでラベルが外れること、`pull-requests: read` で足りること。手順: ブランチを push → PR を開く（`gh` が無いので、画面から）→ 検出で赤 → 画面でラベルを付けて緑 → 新しいコミットを push してラベルが外れ、赤に戻る。
+### GitHub 上で確認したこと（人間が PR で確認）
+- PR を開くと `compare` が動く。最初は**緑になった**（バグ: `| tee` が終了コードを隠していた。既定の shell は `bash -e` で pipefail が無い）。`set -o pipefail` を足して直した（コミット `2aedcb3`。Red のテストつき）。
+- 直したあとは、`compare` が赤になった（守りの仕組み自体の7件。終了コード1）。
+- ラベル `guard-change-approved` を付けると、再実行されて**緑**になった（ラベルを API で読めること、`pull-requests: read` で足りることも確認）。
+- ラベルが付いたまま、空のコミットを push すると、`unlabel` がラベルを外し、`compare` が**赤に戻った**（承認のあとの追加コミットが、素通りしない）。
+- 学び: workflow の文面を見るテストだけでは、実際の終了コードは確かめられない。GitHub 上の確認で、初めて見つかった。
+
+### 確認していないこと
+- `test-change-approved` の実機での確認（`guard-change-approved` だけで確かめた。コードは同じ経路）。
 - `gh pr create --label` の deny などの `settings.json` の設定（この req の外。別の小さな req）。それが入るまでは、承認ラベルの安全性は足りない。
 - 工程の説明: Red を確認できないテスト（網）は、`discussion-log.md` の AI案ではなく、コミットメッセージに理由を書いた。
