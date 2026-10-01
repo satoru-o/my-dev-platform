@@ -181,7 +181,7 @@ class GitError(Exception):
     """「既存」の基準（HEAD）が取れない。呼び出し側は、拒否側に倒す。"""
 
 
-def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
+def _git(root: Path, timeout: float, *args: str) -> subprocess.CompletedProcess:
     # 作業フォルダを固定し、GIT_ で始まる環境変数（GIT_DIR など）を掃除して呼ぶ。
     # 別のリポジトリを「基準」にされて、すべて新規として通ってしまうのを防ぐ。
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
@@ -191,7 +191,7 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
             capture_output=True,
             cwd=root,
             env=env,
-            timeout=GIT_TIMEOUT_SECONDS,
+            timeout=timeout,
             check=False,
         )
     except subprocess.TimeoutExpired as e:
@@ -200,17 +200,17 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
         raise GitError(f"git を実行できない（{type(e).__name__}）") from e
 
 
-def head_content(root: Path, rel: str) -> str | None:
+def head_content(root: Path, rel: str, timeout: float) -> str | None:
     """HEAD にあるファイルの内容。HEAD に無い（新規）、コミットが0件なら None。
 
     基準が取れなければ GitError。「コミット0件」と「git の失敗」は、別に判定する。
     """
-    has_head = _git(root, "rev-parse", "--verify", "--quiet", "HEAD")
+    has_head = _git(root, timeout, "rev-parse", "--verify", "--quiet", "HEAD")
     if has_head.returncode == 1 and not has_head.stdout.strip():
         return None  # コミットが0件: すべて新規として扱う
     if has_head.returncode != 0:
         raise GitError("git rev-parse が失敗した（リポジトリではない、など）")
-    tree = _git(root, "ls-tree", "-z", "HEAD", "--", rel)
+    tree = _git(root, timeout, "ls-tree", "-z", "HEAD", "--", rel)
     if tree.returncode != 0:
         raise GitError("git ls-tree が失敗した")
     if not tree.stdout:
@@ -218,7 +218,7 @@ def head_content(root: Path, rel: str) -> str | None:
     meta = tree.stdout.split(b"\t", 1)[0].decode("utf-8", "replace").split()
     if len(meta) < 3 or meta[1] != "blob":
         return None
-    blob = _git(root, "cat-file", "blob", meta[2])
+    blob = _git(root, timeout, "cat-file", "blob", meta[2])
     if blob.returncode != 0:
         raise GitError("git cat-file が失敗した")
     return blob.stdout.decode("utf-8", "replace")
@@ -227,20 +227,20 @@ def head_content(root: Path, rel: str) -> str | None:
 _head_paths_cache: dict[Path, frozenset[str] | None] = {}
 
 
-def head_paths(root: Path) -> frozenset[str] | None:
+def head_paths(root: Path, timeout: float) -> frozenset[str] | None:
     """HEAD にあるファイルの一覧。コミットが0件なら None。git の失敗は GitError。
 
     1回の判定（decide）の中では、1回だけ取る（書き込み先が多くても、git を何度も呼ばない）。
     """
     if root in _head_paths_cache:
         return _head_paths_cache[root]
-    has_head = _git(root, "rev-parse", "--verify", "--quiet", "HEAD")
+    has_head = _git(root, timeout, "rev-parse", "--verify", "--quiet", "HEAD")
     if has_head.returncode == 1 and not has_head.stdout.strip():
         _head_paths_cache[root] = None
         return None
     if has_head.returncode != 0:
         raise GitError("git rev-parse が失敗した（リポジトリではない、など）")
-    listing = _git(root, "ls-tree", "-r", "-z", "--name-only", "HEAD")
+    listing = _git(root, timeout, "ls-tree", "-r", "-z", "--name-only", "HEAD")
     if listing.returncode != 0:
         raise GitError("git ls-tree が失敗した")
     paths = frozenset(
@@ -532,7 +532,9 @@ def _guarded_kind(rel: str, root: Path) -> str | None:
     return None
 
 
-def change_reason(tool_name: str, tool_input: dict, root: Path, rel: str) -> str | None:
+def change_reason(
+    tool_name: str, tool_input: dict, root: Path, rel: str, timeout: float
+) -> str | None:
     """Edit・Write が、既存のテスト・pytest の設定・req.md の AC を、黙って変えるものなら、拒否する理由。"""
     kind = _guarded_kind(rel, root)
     if kind is None:
@@ -541,7 +543,7 @@ def change_reason(tool_name: str, tool_input: dict, root: Path, rel: str) -> str
     if new_src is None:
         return None
     try:
-        base_src = head_content(root, rel)
+        base_src = head_content(root, rel, timeout)
     except GitError as e:
         return (
             f"「既存」の基準（HEAD）が取れないため、拒否しました（{e}）。{CHANGE_HINT}"
@@ -825,10 +827,10 @@ def _shell_targets(text: str) -> list[str]:
     return targets
 
 
-def _exists_in_baseline(root: Path, rel: str) -> bool:
+def _exists_in_baseline(root: Path, rel: str, timeout: float) -> bool:
     """「既存」か。HEAD にあれば既存。git が使えないときは、ディスクにあれば既存とみなす（安全側）。"""
     try:
-        paths = head_paths(root)
+        paths = head_paths(root, timeout)
     except GitError:
         return (root / rel).exists()
     return paths is not None and rel in paths
@@ -839,7 +841,7 @@ _UNRESOLVED_TEST_RE = re.compile(
 )
 
 
-def bash_change_reason(targets: list[str], root: Path) -> str | None:
+def bash_change_reason(targets: list[str], root: Path, timeout: float) -> str | None:
     """Bash 経由で、既存のテストファイルに書き込むコマンドなら、拒否する理由（まだ無いファイルは通す）。"""
     for raw in targets:
         t = raw.strip().strip("\"'")
@@ -853,7 +855,8 @@ def bash_change_reason(targets: list[str], root: Path) -> str | None:
         if rel is None:
             continue
         if rel == "tests" or (
-            _guarded_kind(rel, root) is not None and _exists_in_baseline(root, rel)
+            _guarded_kind(rel, root) is not None
+            and _exists_in_baseline(root, rel, timeout)
         ):
             return f"Bash 経由で、既存のテスト・pytest の設定・実装中の req.md（{rel}）を書き換えるコマンドです。追記は Edit ツールを使ってください。{CHANGE_HINT}"
     return None
@@ -1136,6 +1139,7 @@ def _bash_scan(command: str, root: Path) -> tuple[list[str], list[str], str]:
 def decide(tool_name: str, tool_input: dict, root: Path) -> str | None:
     """拒否する理由。通してよければ None。"""
     _head_paths_cache.clear()
+    timeout = GIT_TIMEOUT_SECONDS
     if tool_name in WRITE_TOOLS:
         path = tool_input.get(WRITE_TOOLS[tool_name])
         if not path:
@@ -1145,7 +1149,9 @@ def decide(tool_name: str, tool_input: dict, root: Path) -> str | None:
         reason = deny_reason(kind, root) if kind else None
         if reason or rel is None or tool_name not in ("Edit", "Write"):
             return reason
-        return _with_switch(change_reason(tool_name, tool_input, root, rel), root)
+        return _with_switch(
+            change_reason(tool_name, tool_input, root, rel, timeout), root
+        )
     if tool_name == "Bash":
         kinds, targets, shell = _bash_scan(str(tool_input.get("command", "")), root)
         for kind in kinds:
@@ -1156,7 +1162,7 @@ def decide(tool_name: str, tool_input: dict, root: Path) -> str | None:
         if git_why and not git_switchable:
             return git_why  # 履歴を動かす操作は、スイッチでは通さない
         # 守る対象の変更は、スイッチがあれば、1回だけ通す（複数あっても、1回で足りる）
-        return _with_switch(git_why or bash_change_reason(targets, root), root)
+        return _with_switch(git_why or bash_change_reason(targets, root, timeout), root)
     return None
 
 
