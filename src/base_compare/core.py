@@ -27,6 +27,10 @@ GUARD_PATHS = (
 )
 
 
+# 検出の種類ごとの、承認ラベル
+LABEL_FOR = {"test": "test-change-approved", "guard": "guard-change-approved"}
+
+
 @dataclass(frozen=True)
 class FileChange:
     path: str  # リポジトリの相対パス（posix）
@@ -44,7 +48,8 @@ class Finding:
 @dataclass
 class Report:
     verdict: str  # "green" か "red"
-    findings: list[Finding] = field(default_factory=list)
+    findings: list[Finding] = field(default_factory=list)  # 通っていない検出
+    approved: list[Finding] = field(default_factory=list)  # 承認ラベルで通した検出
 
 
 def _is_guard_path(path: str) -> bool:
@@ -70,4 +75,10 @@ def check(changes, base_ids, head_ids, labels) -> Report:
             findings.append(Finding(path=change.path, reason=reason))
     for lost in sorted(base_ids - head_ids):
         findings.append(Finding(path=lost, reason="基準にあったテストIDが、無くなった"))
-    return Report(verdict="red" if findings else "green", findings=findings)
+    approved = [f for f in findings if LABEL_FOR[f.category] in labels]
+    remaining = [f for f in findings if f not in approved]
+    return Report(
+        verdict="red" if remaining else "green",
+        findings=remaining,
+        approved=approved,
+    )
