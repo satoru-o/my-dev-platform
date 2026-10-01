@@ -13,6 +13,7 @@ Bash は、書き込みに見えるコマンドだけを見る「ベストエフ
 想定外の例外は、安全側（拒否）に倒す。
 """
 
+import bisect
 import json
 import os
 import posixpath
@@ -39,10 +40,6 @@ PATH_RE = {
 WRITE_VERB = (
     r"(?:^|[;&|(]\s*|\bxargs\s+|\bsudo\s+)"
     r"(?:sed\s[^;&|\n]*-\w*i|tee|mv|cp|rm|touch|truncate|ln|chmod|chown|install|rsync|dd|patch)\b"
-)
-PY_WRITE = (
-    r"(?:write_text|write_bytes|\.write\(|open\([^)]*[\"'][wax+]"
-    r"|shutil\.(?:copy|move|rmtree)|os\.(?:remove|rename|replace|unlink))"
 )
 
 # heredoc（`<<`）。here-string（`<<<`）は含めない。
@@ -123,7 +120,10 @@ class Heredoc:
     """heredoc 1つ分。body は本文（終了行は含まない）。"""
 
     receiver: str  # `<<` を含む1行。受け取るコマンドの判定に使う
-    pos: int  # receiver の中の `<<` の位置
+    line_no: int  # receiver が、コマンドの何行目か
+    seg: tuple[
+        int, int
+    ]  # receiver のうち、`<<` を含むコマンド列の範囲（`;` `&&` `||` `&` の区切りの間）
     quoted: bool  # 区切り語が引用符（`'EOF'`、`"EOF"`、`\EOF`）つき。本文は展開されない
     body: str
 
@@ -140,9 +140,12 @@ def split_heredocs(command: str) -> tuple[str, list[Heredoc]]:
     i = 0
     while i < len(lines):
         line = lines[i]
+        line_no = i
         shell.append(line)
         i += 1
-        for m in HEREDOC_RE.finditer(line):
+        matches = list(HEREDOC_RE.finditer(line))
+        bounds = _separator_bounds(line) if matches else ([], [])
+        for m in matches:
             dash = bool(m.group(1))
             delim = m.group(2) or m.group(3) or m.group(5)
             body: list[str] = []
@@ -157,7 +160,11 @@ def split_heredocs(command: str) -> tuple[str, list[Heredoc]]:
             )
             docs.append(
                 Heredoc(
-                    receiver=line, pos=m.start(), quoted=quoted, body="\n".join(body)
+                    receiver=line,
+                    line_no=line_no,
+                    seg=_segment_bounds(bounds, len(line), m.start()),
+                    quoted=quoted,
+                    body="\n".join(body),
                 )
             )
     return "\n".join(shell), docs
@@ -170,15 +177,20 @@ _SEP_RE = re.compile(r";|&&|\|\||&")
 _WRAPPERS = {"sudo", "env", "exec", "time", "nohup", "command", "builtin"}
 
 
-def _segment(line: str, pos: int) -> str:
-    """line のうち、pos を含む1つのコマンド列（`;` `&&` `||` `&` の区切りの間）。"""
-    start = 0
-    for m in _SEP_RE.finditer(line):
-        if m.end() <= pos:
-            start = m.end()
-        elif m.start() >= pos:
-            return line[start : m.start()]
-    return line[start:]
+def _separator_bounds(line: str) -> tuple[list[int], list[int]]:
+    """区切り（`;` `&&` `||` `&`）の、始まりの位置の一覧と、終わりの位置の一覧。"""
+    spans = [m.span() for m in _SEP_RE.finditer(line)]
+    return [s for s, _ in spans], [e for _, e in spans]
+
+
+def _segment_bounds(
+    bounds: tuple[list[int], list[int]], length: int, pos: int
+) -> tuple[int, int]:
+    """pos を含む1つのコマンド列の範囲。1行に `<<` が大量にあっても、遅くならないよう二分探索する。"""
+    starts, ends = bounds
+    i = bisect.bisect_right(ends, pos)
+    j = bisect.bisect_left(starts, pos)
+    return (ends[i - 1] if i else 0), (starts[j] if j < len(starts) else length)
 
 
 def _is_data_command(command: str) -> bool:
@@ -194,14 +206,13 @@ def _is_data_command(command: str) -> bool:
     return name in DATA_RECEIVERS
 
 
-def receives_data_only(doc: Heredoc) -> bool:
-    """heredoc の本文が、実行されず、データとして書かれるだけか。
+def segment_is_data_only(segment: str) -> bool:
+    """heredoc の本文が、実行されず、データとして書かれるだけか（`<<` を含むコマンド列で判定する）。
 
-    `<<` を含むコマンド列の、パイプでつながったすべてのコマンドが、データを受けるだけのものであること。
+    パイプでつながったすべてのコマンドが、データを受けるだけのものであること。
     判定できなければ（知らないコマンドがあれば）、実行されるものとして扱う（安全側）。
     """
-    commands = _segment(doc.receiver, doc.pos).split("|")
-    return all(_is_data_command(c) for c in commands)
+    return all(_is_data_command(c) for c in segment.split("|"))
 
 
 MAX_SUBSTITUTION_DEPTH = 10
@@ -323,10 +334,10 @@ def _legacy_kinds(text: str) -> list[str]:
     """書き込みに見えるシェルのコマンドが触れるパスの種類（ベストエフォート）。"""
     kinds = []
     for kind, path in PATH_RE.items():
-        redirect = rf">>?\s*[\"']?(?:[^\s\"';&|]*/)?{path}"
+        # `>` を語に含めない（`>>>>…` のような入力で、各 `>` から末尾まで読んで、遅くならないように）
+        redirect = rf">>?\s*[\"']?(?:[^\s\"';&|>]*/)?{path}"
         verb = rf"{WRITE_VERB}[^;&|\n]*{path}"
-        py = bool(re.search(PY_WRITE, text)) and bool(re.search(path, text))
-        if re.search(redirect, text) or re.search(verb, text, re.MULTILINE) or py:
+        if re.search(redirect, text) or re.search(verb, text, re.MULTILINE):
             kinds.append(kind)
     return kinds
 
@@ -334,18 +345,36 @@ def _legacy_kinds(text: str) -> list[str]:
 def bash_kinds(command: str, root: Path) -> list[str]:
     """書き込みに見えるコマンドが触れるパスの種類（ベストエフォート）。"""
     shell, docs = split_heredocs(command)
+    shell_parts = [shell]
     kinds: set[str] = set()
+    # 受け取るコマンドの判定は、1行に `<<` が大量にあっても、同じコマンド列につき1回だけ行う
+    receivers: dict[tuple[int, tuple[int, int]], tuple[bool, bool]] = {}
     for d in docs:
-        if PYTHON_WORD_RE.search(d.receiver):
+        key = (d.line_no, d.seg)
+        if key not in receivers:
+            segment = d.receiver[d.seg[0] : d.seg[1]]
+            receivers[key] = (
+                bool(PYTHON_WORD_RE.search(segment)),
+                segment_is_data_only(segment),
+            )
+        is_python, data_only = receivers[key]
+        if is_python:
             kinds |= python_kinds(d.body, root)  # python の本文は、書き込み先で判定する
-        elif not receives_data_only(d):
-            shell += "\n" + d.body  # 実行されうる本文は、シェルのコマンドとして調べる
+        elif not data_only:
+            shell_parts.append(
+                d.body
+            )  # 実行されうる本文は、シェルのコマンドとして調べる
         elif not d.quoted:
             units, parsed = expansions(d.body)  # データでも、展開される部分は実行される
             for unit in units:
                 kinds |= set(_legacy_kinds(unit))
             if not parsed:
                 kinds.add("protected")  # 解析しきれないものは、拒否側に倒す
+    shell = "\n".join(shell_parts)
+    if PYTHON_WORD_RE.search(shell):
+        kinds |= python_kinds(
+            shell, root
+        )  # `python3 -c "…"` など。書き込み先で判定する
     kinds |= set(_legacy_kinds(shell))
     return [k for k in PATH_RE if k in kinds]
 
