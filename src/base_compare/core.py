@@ -56,6 +56,18 @@ class Report:
     )  # ツール自身の失敗（承認でも通さない）
 
 
+# 比較の関数（change_reason_for）が返す理由の形: 「<対象>を変える・弱める・消す変更です（<理由>）」
+_DETECT_MARK = "を変える・弱める・消す変更です（"
+
+
+def _kind_of(reason: str) -> str:
+    """理由から、種別を決める。知らない形は、「比較できない」（承認でも通さない）に倒す。"""
+    _, found, why = reason.partition(_DETECT_MARK)
+    if not found or why.startswith("大きすぎて"):
+        return "比較できない"
+    return "検出"
+
+
 def _is_guard_path(path: str) -> bool:
     return any(path == g or path.startswith(g) for g in GUARD_PATHS)
 
@@ -83,7 +95,7 @@ def check(changes, base_ids, head_ids, labels, tool_errors=()) -> Report:
             )
             continue
         if reason:
-            kind = "比較できない" if "大きすぎて" in reason else "検出"
+            kind = _kind_of(reason)
             findings.append(Finding(path=change.path, reason=reason, kind=kind))
     for lost in sorted(base_ids - head_ids):
         findings.append(Finding(path=lost, reason="基準にあったテストIDが、無くなった"))
