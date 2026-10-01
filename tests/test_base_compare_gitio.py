@@ -15,3 +15,14 @@ def test_V03_日本語_絵文字_空白_改行を含むパスも正しく読む(
         ("D", "tests/with space.py"),
         ("A", "tests/new\nline.py"),
     ]
+
+
+def test_AC2_git_diffの出力が壊れていたらツール自身の失敗():
+    try:
+        gitio.parse_name_status(b"M\0")
+    except gitio.ToolError:
+        raised = True
+    else:
+        raised = False
+
+    assert raised
