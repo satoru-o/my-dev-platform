@@ -27,6 +27,7 @@ import json
 import os
 import posixpath
 import re
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -34,6 +35,9 @@ from pathlib import Path
 
 PROTECTED = (".claude", "CLAUDE.md", ".github", "specs/README.md", "specs/_catalog")
 UNLOCK = ".claude/UNLOCK"
+SWITCH = (
+    ".claude/ALLOW_TEST_CHANGE"  # 人間だけが置ける。既存のテストの変更を、1回だけ通す
+)
 GIT_TIMEOUT_SECONDS = 5.0  # 「既存」の基準（HEAD）を取る git の、待つ時間の上限
 ACTIVE = {"planned", "red", "green"}
 WRITE_TOOLS = {
@@ -47,6 +51,7 @@ PATH_RE = {
     "protected": r"(?:\.claude(?![\w-])|CLAUDE\.md|\.github(?![\w-])|specs/README\.md|specs/_catalog(?![\w-]))",
     "tests": r"(?<![\w.-])tests(?:/|(?![\w.-]))",
     "src": r"(?<![\w.-])src(?:/|(?![\w.-]))",
+    "switch": r"ALLOW_TEST_CHANGE",
 }
 WRITE_VERB = (
     r"(?:^|[;&|(]\s*|\bxargs\s+|\bsudo\s+)"
@@ -91,6 +96,8 @@ def rel_path(path: str, root: Path) -> str | None:
 
 
 def kind_of(rel: str) -> str | None:
+    if rel == SWITCH:
+        return "switch"
     for p in PROTECTED:
         if rel == p or rel.startswith(p + "/"):
             return "protected"
@@ -102,6 +109,12 @@ def kind_of(rel: str) -> str | None:
 
 def deny_reason(kind: str, root: Path) -> str | None:
     """拒否する理由。通してよければ None。"""
+    if kind == "switch":
+        return (
+            "既存のテストの変更を承認するスイッチ（.claude/ALLOW_TEST_CHANGE）は、人間だけが置けます。"
+            "AI が作る・触る・消すことは、UNLOCK があっても拒否します。"
+            "承認する場合は、人間が `! touch .claude/ALLOW_TEST_CHANGE` を実行します（1回使うと消えます）。"
+        )
     if kind == "protected":
         if (root / UNLOCK).exists():
             return None
@@ -533,8 +546,8 @@ def _path_kind(path: str, root: Path) -> str | None:
     return kind_of(rel) if rel is not None else None
 
 
-def python_kinds(code: str, root: Path) -> set[str]:
-    """python のコードが書き込む（と判断できる）パスの種類。
+def python_targets(code: str) -> list[str]:
+    """python のコードが書き込む（と判断できる）パスの文字列。
 
     書き込み先は、文字列リテラルか、リテラルを代入した変数から読む。
     代入が見えない変数（`p=sys.argv[1]` など）は、判断できないので通す（ベストエフォート）。
@@ -563,13 +576,84 @@ def python_kinds(code: str, root: Path) -> set[str]:
         targets.append(resolve(m.group(1), m.group(2), m.group(3)))
         targets.append(resolve(m.group(4), m.group(5), m.group(6)))
 
+    return [t for t in targets if t]
+
+
+def python_kinds(code: str, root: Path) -> set[str]:
+    """python のコードが書き込む（と判断できる）パスの種類。"""
     kinds: set[str] = set()
-    for t in targets:
-        if t:
-            kind = _path_kind(t, root)
-            if kind:
-                kinds.add(kind)
+    for t in python_targets(code):
+        kind = _path_kind(t, root)
+        if kind:
+            kinds.add(kind)
     return kinds
+
+
+# --- Bash: 書き込み先のパス（既存のテストへの書き込みを調べる） -----------------------------
+
+_REDIRECT_RE = re.compile(r"""(?<![<&])>{1,2}[ \t]*["']?([^\s"';&|<>]+)""")
+_VERB_ARGS_RE = re.compile(rf"{WRITE_VERB}([^;&|\n]*)", re.MULTILINE)
+
+
+def _shell_targets(text: str) -> list[str]:
+    """シェルのコマンドが書き込む（と判断できる）パスの文字列。リダイレクトの先、書き込み系のコマンドの引数。"""
+    if "tests" not in text and "conftest" not in text:
+        return []  # 守る対象に関係しない（巨大な入力で、無駄に調べない）
+    targets = [m.group(1) for m in _REDIRECT_RE.finditer(text)]
+    for m in _VERB_ARGS_RE.finditer(text):
+        try:
+            words = shlex.split(m.group(1))
+        except ValueError:
+            words = m.group(1).split()
+        for w in words:
+            if not w.startswith("-"):
+                targets.append(w[3:] if w.startswith("of=") else w)
+    return targets
+
+
+def _exists_in_baseline(root: Path, rel: str) -> bool:
+    """「既存」か。HEAD にあれば既存。git が使えないときは、ディスクにあれば既存とみなす（安全側）。"""
+    try:
+        return head_content(root, rel) is not None
+    except GitError:
+        return (root / rel).exists()
+
+
+_UNRESOLVED_TEST_RE = re.compile(r"(?:^|/)(?:tests(?:/|$)|conftest)")
+
+
+def bash_change_reason(targets: list[str], root: Path) -> str | None:
+    """Bash 経由で、既存のテストファイルに書き込むコマンドなら、拒否する理由（まだ無いファイルは通す）。"""
+    for raw in targets:
+        t = raw.strip().strip("\"'")
+        if not t:
+            continue
+        if any(c in t for c in "*?[${`"):
+            if _UNRESOLVED_TEST_RE.search(t):  # glob や変数で、書き込み先を決められない
+                return f"Bash 経由で、テストの書き込み先を決められないコマンドです（{t}）。追記は Edit ツールを使ってください。{CHANGE_HINT}"
+            continue
+        rel = rel_path(t, root)
+        if rel is None:
+            continue
+        if rel == "tests" or (_is_test_py(rel) and _exists_in_baseline(root, rel)):
+            return f"Bash 経由で、既存のテスト（{rel}）を書き換えるコマンドです。追記は Edit ツールを使ってください。{CHANGE_HINT}"
+    return None
+
+
+def _use_switch(root: Path) -> bool:
+    """スイッチ（人間が置く）があれば、消して True。1回で消える。消せなければ、通さない。"""
+    try:
+        (root / SWITCH).unlink()
+    except OSError:
+        return False
+    return True
+
+
+def _with_switch(reason: str | None, root: Path) -> str | None:
+    """拒否する理由が、スイッチで通せるもの（既存のテストの変更）なら、スイッチを使って通す。"""
+    if reason and _use_switch(root):
+        return None
+    return reason
 
 
 # --- Bash: 判定 -------------------------------------------------------------------
@@ -589,9 +673,15 @@ def _legacy_kinds(text: str) -> list[str]:
 
 def bash_kinds(command: str, root: Path) -> list[str]:
     """書き込みに見えるコマンドが触れるパスの種類（ベストエフォート）。"""
+    return _bash_scan(command, root)[0]
+
+
+def _bash_scan(command: str, root: Path) -> tuple[list[str], list[str]]:
+    """（書き込みに見えるコマンドが触れるパスの種類、書き込み先のパスの文字列）。ベストエフォート。"""
     shell, docs = split_heredocs(command)
     shell_parts = [shell]
     kinds: set[str] = set()
+    targets: list[str] = []
     # 受け取るコマンドの判定は、1行に `<<` が大量にあっても、同じコマンド列につき1回だけ行う
     receivers: dict[tuple, tuple[bool, bool]] = {}
 
@@ -610,6 +700,7 @@ def bash_kinds(command: str, root: Path) -> list[str]:
         if is_python:
             # python の本文は、書き込み先で判定する
             kinds |= python_kinds(d.body, root)
+            targets += python_targets(d.body)
         elif not data_only:
             # 実行されうる本文は、シェルのコマンドとして調べる
             shell_parts.append(d.body)
@@ -618,6 +709,7 @@ def bash_kinds(command: str, root: Path) -> list[str]:
             units, parsed = expansions(d.body)
             for unit in units:
                 kinds |= set(_legacy_kinds(unit))
+                targets += _shell_targets(unit)
             if not parsed:
                 # 解析しきれないものは、拒否側に倒す
                 kinds.add("protected")
@@ -636,16 +728,20 @@ def bash_kinds(command: str, root: Path) -> list[str]:
             content = next(g for g in m.groups() if g is not None)
             if is_python or PYTHON_WORD_RE.search(content):
                 kinds |= python_kinds(content, root)
+                targets += python_targets(content)
             kinds |= set(_legacy_kinds(content))
+            targets += _shell_targets(content)
 
     if PYTHON_WORD_RE.search(shell):
         # `python3 -c "…"` など。書き込み先で判定する
         kinds |= python_kinds(shell, root)
+        targets += python_targets(shell)
     if OTHER_INTERPRETER_RE.search(shell) and GENERIC_WRITE_RE.search(shell):
         # python 以外は、書き込み風の文字列と保護パスの文字列が一緒にあれば、そのパスに書くものとみなす
         kinds |= {k for k, path in PATH_RE.items() if re.search(path, shell)}
     kinds |= set(_legacy_kinds(shell))
-    return [k for k in PATH_RE if k in kinds]
+    targets += _shell_targets(shell)
+    return [k for k in PATH_RE if k in kinds], targets
 
 
 def decide(tool_name: str, tool_input: dict, root: Path) -> str | None:
@@ -659,12 +755,14 @@ def decide(tool_name: str, tool_input: dict, root: Path) -> str | None:
         reason = deny_reason(kind, root) if kind else None
         if reason or rel is None or tool_name not in ("Edit", "Write"):
             return reason
-        return change_reason(tool_name, tool_input, root, rel)
+        return _with_switch(change_reason(tool_name, tool_input, root, rel), root)
     if tool_name == "Bash":
-        for kind in bash_kinds(str(tool_input.get("command", "")), root):
+        kinds, targets = _bash_scan(str(tool_input.get("command", "")), root)
+        for kind in kinds:
             reason = deny_reason(kind, root)
             if reason:
                 return reason
+        return _with_switch(bash_change_reason(targets, root), root)
     return None
 
 
