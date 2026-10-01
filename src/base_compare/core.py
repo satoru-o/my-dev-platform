@@ -43,6 +43,7 @@ class Finding:
     path: str
     reason: str
     category: str = "test"  # "test"（テストの変更）か "guard"（守りの仕組み自体）
+    kind: str = "検出"  # "検出"（承認できる）か "比較できない"（承認でも通さない）
 
 
 @dataclass
@@ -82,10 +83,13 @@ def check(changes, base_ids, head_ids, labels, tool_errors=()) -> Report:
             )
             continue
         if reason:
-            findings.append(Finding(path=change.path, reason=reason))
+            kind = "比較できない" if "大きすぎて" in reason else "検出"
+            findings.append(Finding(path=change.path, reason=reason, kind=kind))
     for lost in sorted(base_ids - head_ids):
         findings.append(Finding(path=lost, reason="基準にあったテストIDが、無くなった"))
-    approved = [f for f in findings if LABEL_FOR[f.category] in labels]
+    approved = [
+        f for f in findings if f.kind == "検出" and LABEL_FOR[f.category] in labels
+    ]
     remaining = [f for f in findings if f not in approved]
     return Report(
         verdict="red" if remaining or errors else "green",
