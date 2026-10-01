@@ -34,3 +34,23 @@ def test_AC5_守りの仕組み自体の承認が混ざるときは_要約の先
 
     assert "⚠️" in first_line
     assert "守りの仕組み自体" in first_line
+
+
+def test_O01_赤の理由を_検出_比較できない_ツール自身の失敗に分けて出す():
+    result = core.Report(
+        verdict="red",
+        findings=[
+            core.Finding(path="tests/test_a.py", reason="期待値が変わった"),
+            core.Finding(path="tests/big.py", reason="大きすぎる", kind="比較できない"),
+        ],
+        errors=["テストの収集が時間内に終わらない"],
+    )
+
+    text = report.render(result)
+
+    assert "承認されていない検出" in text
+    assert "`tests/test_a.py`: 期待値が変わった" in text
+    assert "比較できない" in text
+    assert "`tests/big.py`: 大きすぎる" in text
+    assert "ツール自身の失敗" in text
+    assert "テストの収集が時間内に終わらない" in text
