@@ -1,5 +1,6 @@
 """検査の入口。CI（失敗にする）と、ローカル（警告だけ）の2つの動かし方。"""
 
+import argparse
 import tempfile
 from pathlib import Path
 
@@ -54,4 +55,15 @@ def make_collector(repo, base_ref):
 
 
 def main(argv=None):
-    return 0  # スタブ（Red 用。わざと誤った値）
+    parser = argparse.ArgumentParser(description="origin/main と比べた検査")
+    parser.add_argument("--repo", default=".")
+    parser.add_argument("--base", default="origin/main")
+    parser.add_argument("--mode", choices=["ci", "local"], default="local")
+    parser.add_argument("--labels", default="", help="承認ラベル（カンマ区切り）")
+    args = parser.parse_args(argv)
+    labels = frozenset(x for x in args.labels.split(",") if x)
+    code, text = run(
+        args.repo, args.base, labels, args.mode, make_collector(args.repo, args.base)
+    )
+    print(text)
+    return code
