@@ -255,6 +255,15 @@ def test_pythonのheredocで書き込み先がspecsなら本文に保護パス�
     assert bash(root, command) is None
 
 
+# Red 2（AC-1）: データとして受けるだけのコマンドの heredoc は、本文を調べない
+
+
+def test_catのheredocは本文の行頭が書き込み風でも通す(tmp_path):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    command = "cat > specs/x.md <<'EOF'\ntouch .claude/x\nEOF"
+    assert bash(root, command) is None
+
+
 # --- 実際のスクリプトを標準入力で動かす -----------------------------------------
 
 
