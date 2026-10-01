@@ -9,14 +9,25 @@
    （red = 失敗するテストがあり、実装中。実装フェーズでは tests/ を触らない）。
 
 Bash は、書き込みに見えるコマンドだけを見る「ベストエフォート」。完全な防御ではない。
+  - heredoc: 受け取るのがデータだけ（cat、tee など）なら、本文は調べない（引用符なしなら、展開される
+    `$(…)` とバッククォートだけ調べる。解析しきれないものは拒否）。bash や python など、実行するもの
+    （知らないコマンドも含む）なら、本文を調べる。here-string（`<<<`）も同じ。
+  - python: 書き込み先は、文字列リテラルか、リテラルを代入した変数から読む。代入が見えない変数は通す。
+  - python 以外のインタプリタ（ruby、node など）: 丁寧には解析せず、「書き込み風の文字列」と
+    「保護パスの文字列」が一緒にあれば拒否する（旧版と同じ。誤検出は残る。他の言語は将来の拡張）。
+  - 巨大な入力で遅くならないこと（hook のタイムアウトは10秒。超えると素通りになる）が前提。
+    入力量の2乗に比例する処理を入れない（test_guard.py の SLOW_CASES で確かめる）。
 本当の壁は CODEOWNERS / ブランチ保護（M2）で作る。
 想定外の例外は、安全側（拒否）に倒す。
 """
 
+import bisect
 import json
 import os
+import posixpath
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 PROTECTED = (".claude", "CLAUDE.md", ".github", "specs/README.md", "specs/_catalog")
@@ -38,9 +49,21 @@ WRITE_VERB = (
     r"(?:^|[;&|(]\s*|\bxargs\s+|\bsudo\s+)"
     r"(?:sed\s[^;&|\n]*-\w*i|tee|mv|cp|rm|touch|truncate|ln|chmod|chown|install|rsync|dd|patch)\b"
 )
-PY_WRITE = (
-    r"(?:write_text|write_bytes|\.write\(|open\([^)]*[\"'][wax+]"
-    r"|shutil\.(?:copy|move|rmtree)|os\.(?:remove|rename|replace|unlink))"
+
+# heredoc（`<<`）。here-string（`<<<`）は含めない。
+HEREDOC_RE = re.compile(
+    r"(?<!<)<<(?!<)(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|(\\?)([A-Za-z_][\w.-]*))"
+)
+HERESTRING_RE = re.compile(r"<<<[ \t]*(?:\"([^\"\n]*)\"|'([^'\n]*)'|([^\s;&|<>]*))")
+PYTHON_WORD_RE = re.compile(r"(?<![\w./-])python[\d.]*(?![\w.-])")
+# python 以外のインタプリタ。丁寧には解析せず、旧版と同じ粗い判定にとどめる（Q9）。
+# 他の言語（TypeScript など）を使うようになったら、拡張として別の要望で検討する。
+OTHER_INTERPRETER_RE = re.compile(
+    r"(?<![\w./-])(?:ruby|node|nodejs|perl|php|lua|deno|bun)(?![\w.-])"
+)
+# 書き込み風の文字列。`open(` の先読みは、巨大な入力で遅くならないよう、長さを区切る。
+GENERIC_WRITE_RE = re.compile(
+    r"""write_text|write_bytes|\.write\(|\bopen\([^)]{0,500}?["'][wax+]"""
 )
 
 
@@ -107,16 +130,292 @@ def deny_reason(kind: str, root: Path) -> str | None:
     return None
 
 
-def bash_kinds(command: str) -> list[str]:
-    """書き込みに見えるコマンドが触れるパスの種類（ベストエフォート）。"""
+# --- Bash: heredoc の解析 -----------------------------------------------------
+
+
+@dataclass
+class Heredoc:
+    """heredoc 1つ分。body は本文（終了行は含まない）。"""
+
+    receiver: str  # `<<` を含む1行。受け取るコマンドの判定に使う
+    line_no: int  # receiver が、コマンドの何行目か
+    seg: tuple[
+        int, int
+    ]  # receiver のうち、`<<` を含むコマンド列の範囲（`;` `&&` `||` `&` の区切りの間）
+    quoted: bool  # 区切り語が引用符（`'EOF'`、`"EOF"`、`\EOF`）つき。本文は展開されない
+    body: str
+
+
+def split_heredocs(command: str) -> tuple[str, list[Heredoc]]:
+    """コマンドを、本文を除いたシェルの文と、heredoc の一覧に分ける。
+
+    終了行は、`<<` なら行全体が区切り語と等しいとき、`<<-` なら行頭のタブを除いて等しいとき。
+    空白つきの `EOF` などは終了行にならない（シェルの規則どおり）。閉じていなければ末尾まで本文。
+    """
+    lines = command.split("\n")
+    shell: list[str] = []
+    docs: list[Heredoc] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        line_no = i
+        shell.append(line)
+        i += 1
+        matches = list(HEREDOC_RE.finditer(line))
+        bounds = _separator_bounds(line) if matches else ([], [])
+        for m in matches:
+            dash = bool(m.group(1))
+            delim = m.group(2) or m.group(3) or m.group(5)
+            body: list[str] = []
+            while i < len(lines):
+                cur = lines[i]
+                i += 1
+                if (cur.lstrip("\t") if dash else cur) == delim:
+                    break
+                body.append(cur)
+            quoted = (
+                m.group(2) is not None or m.group(3) is not None or bool(m.group(4))
+            )
+            docs.append(
+                Heredoc(
+                    receiver=line,
+                    line_no=line_no,
+                    seg=_segment_bounds(bounds, len(line), m.start()),
+                    quoted=quoted,
+                    body="\n".join(body),
+                )
+            )
+    return "\n".join(shell), docs
+
+
+# データとして受け取るだけのコマンド。これ以外（bash、python、不明なもの）は、本文を実行するものとして扱う。
+DATA_RECEIVERS = {"cat", "tee", "head", "tail", "wc", "sort", "uniq", "grep", "diff"}
+DATA_GIT_SUBCOMMANDS = {"commit", "tag"}  # `git commit -F -` のメッセージなど
+_SEP_RE = re.compile(r";|&&|\|\||&")
+_WRAPPERS = {"sudo", "env", "exec", "time", "nohup", "command", "builtin"}
+
+
+def _separator_bounds(line: str) -> tuple[list[int], list[int]]:
+    """区切り（`;` `&&` `||` `&`）の、始まりの位置の一覧と、終わりの位置の一覧。"""
+    spans = [m.span() for m in _SEP_RE.finditer(line)]
+    return [s for s, _ in spans], [e for _, e in spans]
+
+
+def _segment_bounds(
+    bounds: tuple[list[int], list[int]], length: int, pos: int
+) -> tuple[int, int]:
+    """pos を含む1つのコマンド列の範囲。1行に `<<` が大量にあっても、遅くならないよう二分探索する。"""
+    starts, ends = bounds
+    i = bisect.bisect_right(ends, pos)
+    j = bisect.bisect_left(starts, pos)
+    return (ends[i - 1] if i else 0), (starts[j] if j < len(starts) else length)
+
+
+def _is_data_command(command: str) -> bool:
+    words = command.split()
+    while words and (re.fullmatch(r"\w+=\S*", words[0]) or words[0] in _WRAPPERS):
+        words.pop(0)
+    if not words:
+        return False
+    name = posixpath.basename(words[0])
+    if name == "git":
+        rest = [w for w in words[1:] if not w.startswith("-")]
+        return bool(rest) and rest[0] in DATA_GIT_SUBCOMMANDS
+    return name in DATA_RECEIVERS
+
+
+def segment_is_data_only(segment: str) -> bool:
+    """heredoc の本文が、実行されず、データとして書かれるだけか（`<<` を含むコマンド列で判定する）。
+
+    パイプでつながったすべてのコマンドが、データを受けるだけのものであること。
+    判定できなければ（知らないコマンドがあれば）、実行されるものとして扱う（安全側）。
+    """
+    return all(_is_data_command(c) for c in segment.split("|"))
+
+
+MAX_SUBSTITUTION_DEPTH = 10
+
+
+def expansions(body: str) -> tuple[list[str], bool]:
+    """引用符なしの heredoc の本文のうち、展開されて実行される部分（`$(…)` とバッククォート）。
+
+    戻り値は、その中身の一覧と、解析しきれたかどうか。閉じていない、入れ子が深すぎるものは、
+    解析しきれなかったものとして扱う（呼び出し側が、拒否側に倒す）。
+    """
+    units: list[str] = []
+    i, n = 0, len(body)
+    while i < n:
+        c = body[i]
+        if c == "\\":
+            i += 2
+        elif body.startswith("$(", i):
+            arithmetic = body.startswith("$((", i)
+            depth, j = 1, i + 2
+            while j < n and depth > 0:
+                ch = body[j]
+                if ch == "\\":
+                    j += 2
+                    continue
+                if ch == "(":
+                    depth += 1
+                    if depth > MAX_SUBSTITUTION_DEPTH:
+                        return units, False
+                elif ch == ")":
+                    depth -= 1
+                j += 1
+            if depth != 0:
+                return units, False
+            if not arithmetic:
+                units.append(body[i + 2 : j - 1])
+            i = j
+        elif c == "`":
+            j = i + 1
+            while j < n and body[j] != "`":
+                j += 2 if body[j] == "\\" else 1
+            if j >= n:
+                return units, False
+            units.append(body[i + 1 : j])
+            i = j + 1
+        else:
+            i += 1
+    return units, True
+
+
+# --- Bash: python の書き込み先の判定 -------------------------------------------
+
+_STR = r"""(?:'([^'\n]*)'|"([^"\n]*)")"""
+_ARG = rf"""\s*(?:{_STR}|([A-Za-z_]\w*))"""
+_ASSIGN_RE = re.compile(rf"""\b([A-Za-z_]\w*)\s*=\s*(?:Path\(\s*)?{_STR}""")
+_OPEN_RE = re.compile(
+    rf"""\bopen\({_ARG}\s*(?:,\s*(?:mode\s*=\s*)?['"]([^'"\n]*)['"])?"""
+)
+_PATH_WRITE_RE = re.compile(
+    rf"""\bPath\({_ARG}\s*\)\s*\.\s*(?:write_text|write_bytes)\b"""
+)
+_VAR_WRITE_RE = re.compile(r"""\b([A-Za-z_]\w*)\s*\.\s*(?:write_text|write_bytes)\b""")
+_FUNC_RE = re.compile(
+    rf"""\b(?:shutil\.(?:copy|copy2|copyfile|move|rmtree)|os\.(?:remove|rename|replace|unlink))\({_ARG}(?:\s*,{_ARG})?"""
+)
+
+
+def _path_kind(path: str, root: Path) -> str | None:
+    rel = rel_path(path, root)
+    return kind_of(rel) if rel is not None else None
+
+
+def python_kinds(code: str, root: Path) -> set[str]:
+    """python のコードが書き込む（と判断できる）パスの種類。
+
+    書き込み先は、文字列リテラルか、リテラルを代入した変数から読む。
+    代入が見えない変数（`p=sys.argv[1]` など）は、判断できないので通す（ベストエフォート）。
+    """
+    assigns: dict[str, str] = {}
+    for m in _ASSIGN_RE.finditer(code):
+        assigns[m.group(1)] = m.group(2) if m.group(2) is not None else m.group(3)
+
+    def resolve(single: str | None, double: str | None, ident: str | None):
+        if single is not None:
+            return single
+        if double is not None:
+            return double
+        return assigns.get(ident or "")
+
+    targets: list[str | None] = []
+    for m in _OPEN_RE.finditer(code):
+        mode = m.group(4)
+        if mode and set(mode) & set("wax+"):
+            targets.append(resolve(m.group(1), m.group(2), m.group(3)))
+    for m in _PATH_WRITE_RE.finditer(code):
+        targets.append(resolve(m.group(1), m.group(2), m.group(3)))
+    for m in _VAR_WRITE_RE.finditer(code):
+        targets.append(assigns.get(m.group(1)))
+    for m in _FUNC_RE.finditer(code):
+        targets.append(resolve(m.group(1), m.group(2), m.group(3)))
+        targets.append(resolve(m.group(4), m.group(5), m.group(6)))
+
+    kinds: set[str] = set()
+    for t in targets:
+        if t:
+            kind = _path_kind(t, root)
+            if kind:
+                kinds.add(kind)
+    return kinds
+
+
+# --- Bash: 判定 -------------------------------------------------------------------
+
+
+def _legacy_kinds(text: str) -> list[str]:
+    """書き込みに見えるシェルのコマンドが触れるパスの種類（ベストエフォート）。"""
     kinds = []
     for kind, path in PATH_RE.items():
-        redirect = rf">>?\s*[\"']?(?:[^\s\"';&|]*/)?{path}"
+        # `>` を語に含めない（`>>>>…` のような入力で、各 `>` から末尾まで読んで、遅くならないように）
+        redirect = rf">>?\s*[\"']?(?:[^\s\"';&|>]*/)?{path}"
         verb = rf"{WRITE_VERB}[^;&|\n]*{path}"
-        py = bool(re.search(PY_WRITE, command)) and bool(re.search(path, command))
-        if re.search(redirect, command) or re.search(verb, command, re.MULTILINE) or py:
+        if re.search(redirect, text) or re.search(verb, text, re.MULTILINE):
             kinds.append(kind)
     return kinds
+
+
+def bash_kinds(command: str, root: Path) -> list[str]:
+    """書き込みに見えるコマンドが触れるパスの種類（ベストエフォート）。"""
+    shell, docs = split_heredocs(command)
+    shell_parts = [shell]
+    kinds: set[str] = set()
+    # 受け取るコマンドの判定は、1行に `<<` が大量にあっても、同じコマンド列につき1回だけ行う
+    receivers: dict[tuple, tuple[bool, bool]] = {}
+
+    def receiver(key: tuple, line: str, seg: tuple[int, int]) -> tuple[bool, bool]:
+        """（python か、データを受けるだけか）"""
+        if key not in receivers:
+            segment = line[seg[0] : seg[1]]
+            receivers[key] = (
+                bool(PYTHON_WORD_RE.search(segment)),
+                segment_is_data_only(segment),
+            )
+        return receivers[key]
+
+    for d in docs:
+        is_python, data_only = receiver(("doc", d.line_no, d.seg), d.receiver, d.seg)
+        if is_python:
+            # python の本文は、書き込み先で判定する
+            kinds |= python_kinds(d.body, root)
+        elif not data_only:
+            # 実行されうる本文は、シェルのコマンドとして調べる
+            shell_parts.append(d.body)
+        elif not d.quoted:
+            # データでも、引用符なしなら、展開される部分は実行される
+            units, parsed = expansions(d.body)
+            for unit in units:
+                kinds |= set(_legacy_kinds(unit))
+            if not parsed:
+                # 解析しきれないものは、拒否側に倒す
+                kinds.add("protected")
+    shell = "\n".join(shell_parts)
+
+    # here-string（`<<<`）も、受け取るのがデータだけでなければ、中身が実行される
+    for line_no, line in enumerate(shell.split("\n")):
+        if "<<<" not in line:
+            continue
+        bounds = _separator_bounds(line)
+        for m in HERESTRING_RE.finditer(line):
+            seg = _segment_bounds(bounds, len(line), m.start())
+            is_python, data_only = receiver(("hs", line_no, seg), line, seg)
+            if data_only:
+                continue
+            content = next(g for g in m.groups() if g is not None)
+            if is_python or PYTHON_WORD_RE.search(content):
+                kinds |= python_kinds(content, root)
+            kinds |= set(_legacy_kinds(content))
+
+    if PYTHON_WORD_RE.search(shell):
+        # `python3 -c "…"` など。書き込み先で判定する
+        kinds |= python_kinds(shell, root)
+    if OTHER_INTERPRETER_RE.search(shell) and GENERIC_WRITE_RE.search(shell):
+        # python 以外は、書き込み風の文字列と保護パスの文字列が一緒にあれば、そのパスに書くものとみなす
+        kinds |= {k for k, path in PATH_RE.items() if re.search(path, shell)}
+    kinds |= set(_legacy_kinds(shell))
+    return [k for k in PATH_RE if k in kinds]
 
 
 def decide(tool_name: str, tool_input: dict, root: Path) -> str | None:
@@ -129,7 +428,7 @@ def decide(tool_name: str, tool_input: dict, root: Path) -> str | None:
         kind = kind_of(rel) if rel is not None else None
         return deny_reason(kind, root) if kind else None
     if tool_name == "Bash":
-        for kind in bash_kinds(str(tool_input.get("command", ""))):
+        for kind in bash_kinds(str(tool_input.get("command", "")), root):
             reason = deny_reason(kind, root)
             if reason:
                 return reason

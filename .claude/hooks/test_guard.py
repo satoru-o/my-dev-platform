@@ -211,6 +211,275 @@ def test_Bashのsrc書き込みは進行中のreqが無ければ拒否する(tmp
     assert bash(root, "cat src/cart_api/main.py") is None
 
 
+# --- 0004: heredoc と変数経由の書き込み（誤検出の修正） -----------------------------
+# 退行の網: 今の実装でも通るもの。誤検出を直す途中で、拒否すべきものが通らないようにする。
+
+
+def test_変数経由で保護対象を開いて書くのは拒否する(tmp_path):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    command = "python3 - <<'EOF'\np='CLAUDE.md'\nopen(p,'w').write('x')\nEOF"
+    assert bash(root, command) is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "bash <<'EOF'\ntouch .claude/x\nEOF",
+        "cat <<'EOF' | bash\ntouch .claude/x\nEOF",
+    ],
+)
+def test_インタプリタに渡したheredocの本文は拒否する(tmp_path, command):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, command) is not None
+
+
+def test_変数経由で保護対象でない所に書くのは通す(tmp_path):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    command = "python3 - <<'EOF'\np='specs/a.md'\nopen(p,'w').write('x')\nEOF"
+    assert bash(root, command) is None
+
+
+# Red 1（AC-1）: 今回の事例。書き込み先は specs/ で、本文の文章に保護パスがあるだけ
+
+
+def test_pythonのheredocで書き込み先がspecsなら本文に保護パスの文章があっても通す(
+    tmp_path,
+):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    command = (
+        "python3 - <<'EOF'\n"
+        "p='specs/0003/status.md'\n"
+        "open(p,'w').write('see `touch .claude/x`')\n"
+        "EOF"
+    )
+    assert bash(root, command) is None
+
+
+# Red 2（AC-1）: データとして受けるだけのコマンドの heredoc は、本文を調べない
+
+
+def test_catのheredocは本文の行頭が書き込み風でも通す(tmp_path):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    command = "cat > specs/x.md <<'EOF'\ntouch .claude/x\nEOF"
+    assert bash(root, command) is None
+
+
+# 退行の網（S-02、V-03、V-01）: 追加した時点で通る。誤検出を直しても、拒否すべきものが通らないことを守る
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat > specs/x.md <<'EOF'\nhello\nEOF\ncat > CLAUDE.md <<'EOF'\nx\nEOF",
+        "python3 - <<'EOF'\nopen('specs/a.md','w').write('x')\nopen('CLAUDE.md','w').write('y')\nEOF",
+    ],
+)
+def test_書き込みが2つあり片方が保護対象なら拒否する(tmp_path, command):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, command) is not None
+
+
+def test_日本語と絵文字の本文でも判定は変わらない(tmp_path):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    cat_doc = "cat > specs/x.md <<'EOF'\n日本語の文章 🍎\ntouch .claude/x\nEOF"
+    py_doc = (
+        "python3 - <<'EOF'\n"
+        "p='specs/a.md'\n"
+        "open(p,'w').write('日本語 🍎 `touch .claude/x`')\n"
+        "EOF"
+    )
+    assert bash(root, cat_doc) is None
+    assert bash(root, py_doc) is None
+    assert bash(root, "bash <<'EOF'\n日本語 🍎\ntouch .claude/x\nEOF") is not None
+
+
+def test_commandが空や無いときは今までどおり通す(tmp_path):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, "") is None
+    assert guard.decide("Bash", {}, root) is None
+
+
+# Red 3（Q4、Q5）: 引用符なしの heredoc は、本文の `$(…)` とバッククォートが展開される
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat > specs/x.md <<EOF\n$(touch .claude/x)\nEOF",
+        "cat > specs/x.md <<EOF\n`touch .claude/x`\nEOF",
+        # 解析しきれないもの（閉じていない、入れ子が深すぎる）は、拒否側に倒す
+        "cat > specs/x.md <<EOF\n$(touch .claude/x\nEOF",
+        "cat > specs/x.md <<EOF\n" + "$(" * 30 + "date" + ")" * 30 + "\nEOF",
+    ],
+)
+def test_引用符なしのheredocは本文の展開される部分を調べる(tmp_path, command):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, command) is not None
+
+
+def test_引用符なしのheredocでも無害な展開は通す(tmp_path):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, "cat > specs/x.md <<EOF\ntoday: $(date)\nEOF") is None
+
+
+def test_引用符ありのheredocは展開されないので通す(tmp_path):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, "cat > specs/x.md <<'EOF'\n$(touch .claude/x)\nEOF") is None
+
+
+def test_heredocが終わったあとの行は普通のコマンドとして調べる(tmp_path):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    command = "cat > specs/x.md <<'EOF'\nbody\nEOF\ntouch .claude/x"
+    assert bash(root, command) is not None
+
+
+# Red 4（V-04、Q6、Q8）: 巨大な入力でも、2秒以内に判定する（hook のタイムアウトは10秒。超えると素通りになる）
+
+TIME_LIMIT_SECONDS = 2.0
+MB = 1024 * 1024
+
+SLOW_CASES = {
+    # 無害な大きな本文
+    "1MBの無害なheredoc本文": "cat > specs/x.md <<'EOF'\n"
+    + ("あ" * 99 + "\n") * (MB // 100)
+    + "EOF",
+    "1MBの無害な1行のコマンド": "echo " + "a" * MB,
+    # 最悪ケース（正規表現や走査が極端に遅くなりやすいもの）
+    "閉じていないheredocと長い本文": "cat <<'EOF'\n" + "x\n" * 500_000,
+    "小さなheredocが大量": "cat <<'EOF'\nx\nEOF\n" * 50_000,
+    "1行に<<が大量": "cat " + "<<EOF " * 100_000,
+    "openの繰り返し": 'python3 -c "' + "open(" * 200_000 + '"',
+    "書き込み風の動詞の繰り返し": "tee " * 200_000,
+    "リダイレクト記号の繰り返し": "echo " + ">" * 500_000,
+    "rubyの書き込み風の文字列の繰り返し": 'ruby -e "' + "File.write(" * 200_000 + '"',
+    "rubyのopen(の繰り返し": 'ruby -e "' + "open(" * 200_000 + '"',
+    "pythonのheredocでopen(の繰り返し": "python3 - <<'EOF'\n"
+    + "open('" * 100_000
+    + "\nEOF",
+    "$(の繰り返し（引用符なしheredoc）": "cat <<EOF\n" + "$(" * 200_000 + "\nEOF",
+    "バッククォートの繰り返し（引用符なしheredoc）": "cat <<EOF\n"
+    + "`" * 200_000
+    + "\nEOF",
+    "閉じた$(の繰り返し（引用符なしheredoc）": "cat <<EOF\n"
+    + "$(date) " * 100_000
+    + "\nEOF",
+}
+
+
+_CHILD = (
+    "import sys, time\n"
+    "from pathlib import Path\n"
+    "sys.dont_write_bytecode = True\n"
+    f"sys.path.insert(0, {str(GUARD.parent)!r})\n"
+    "import guard\n"
+    "command = sys.stdin.read()\n"
+    "start = time.perf_counter()\n"
+    "guard.decide('Bash', {'command': command}, Path(sys.argv[1]))\n"
+    "print(time.perf_counter() - start)\n"
+)
+
+
+def decide_seconds(root: Path, command: str) -> float | None:
+    """判定にかかった秒数。上限を超えたら None（別プロセスで動かし、上限で打ち切る）。
+
+    同じプロセスで動かすと、遅いケースが終わるまで待つことになり、テスト自体が何分もかかる。
+    """
+    try:
+        done = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", _CHILD, str(root)],
+            input=command,
+            capture_output=True,
+            text=True,
+            timeout=TIME_LIMIT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    return float(done.stdout)
+
+
+@pytest.mark.parametrize("name", list(SLOW_CASES))
+def test_巨大な入力でも判定は時間内に終わる(tmp_path, name):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+
+    elapsed = decide_seconds(root, SLOW_CASES[name])
+
+    assert elapsed is not None, f"{name}: {TIME_LIMIT_SECONDS}秒以内に終わらなかった"
+    assert elapsed < TIME_LIMIT_SECONDS
+
+
+# Red 5（FB 1、Q7）: heredoc の書き方のゆれ。ガードが「閉じた」と思う位置と、シェルが閉じる位置がずれると、
+# 本文のあとのコマンドを見逃す。期待値は Q7=A で承認済み。
+
+TAB = "\t"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Q7-1: タブつきの終了行でも閉じる。次の行は普通のコマンド
+        f"cat <<-'EOF'\nbody\n{TAB}EOF\ntouch .claude/x",
+        # Q7-2: `\EOF` でも、`EOF` の行で閉じる
+        "cat > specs/x.md <<\\EOF\nbody\nEOF\ntouch .claude/x",
+        # Q7-4: here-string も、受け取るのがインタプリタなら実行される
+        'bash <<< "touch .claude/x"',
+        # Q7-6、8: 行頭・末尾が空白の `EOF` は閉じ扱いにならず、本文は全部実行される（bash）
+        "bash <<'EOF'\n EOF\ntouch .claude/x\nEOF",
+        "bash <<'EOF'\nEOF \ntouch .claude/x\nEOF",
+    ],
+)
+def test_heredocの書き方のゆれでも本文のあとのコマンドを見逃さない(tmp_path, command):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, command) is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Q7-3: `\EOF` は引用符つきと同じ扱い。本文は展開されない
+        "cat > specs/x.md <<\\EOF\n$(touch .claude/x)\nEOF",
+        # Q7-5: データとして受けるだけ
+        'cat <<< "touch .claude/x"',
+        # Q7-7、8: 行頭・末尾が空白の `EOF` は閉じ扱いにならず、本文は最後の `EOF` まで続く（cat）
+        "cat > specs/x.md <<'EOF'\n EOF\ntouch .claude/x\nEOF",
+        "cat > specs/x.md <<'EOF'\nEOF \ntouch .claude/x\nEOF",
+    ],
+)
+def test_heredocの書き方のゆれでもデータとして書かれるだけなら通す(tmp_path, command):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, command) is None
+
+
+# Red 6（Q9）: python 以外のインタプリタ（ruby、node、perl、php など）は、旧版と同じ粗い判定にとどめる。
+# 旧版が（偶然）拒否していたものを、退行させない。他の言語の丁寧な解析は、将来の拡張。
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ruby -e \"File.write('CLAUDE.md','x')\"",
+        "node -e \"require('fs').createWriteStream('CLAUDE.md').write('x')\"",
+        "perl -e \"open(F,'>CLAUDE.md')\"",
+        "ruby -e \"File.open('.claude/x','w'){|f| f.write('x')}\"",
+    ],
+)
+def test_python以外のインタプリタが保護対象に書くのは拒否する(tmp_path, command):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, command) is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ruby -e \"File.write('specs/a.md','x')\"",
+        "node -e \"console.log('CLAUDE.md')\"",
+    ],
+)
+def test_python以外のインタプリタでも保護パスに書かないなら通す(tmp_path, command):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, command) is None
+
+
 # --- 実際のスクリプトを標準入力で動かす -----------------------------------------
 
 
