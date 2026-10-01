@@ -2,7 +2,7 @@
 id: 0008
 slug: test-audit-experiment
 kind: chore # feature | chore | refactor（/req-new の最初の質問で決まる。振る舞いが変わらないなら chore か refactor）
-status: green # draft | clarifying | planned | red | green | done
+status: done # draft | clarifying | planned | red | green | done
 size: S0 # 暫定・要確認（kind: chore は S0）
 risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除のいずれにも該当しない）
 ---
@@ -10,7 +10,7 @@ risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除
 # 0008 test-audit-experiment の状態
 
 ## いま
-green。実験は完了。G3 待ち: `docs/experiments/test-audit-0001.md` を読み、done にしてよいか、監査役を常設するか（案A 助言のみ／案B しない／案C 止める）を決めてください。
+done。G3 確認済み。監査役の常設は、別途判断する（実験の資料は `docs/experiments/test-audit-0001.md`）。
 
 ## 結果
 - 15件を監査役（読み取り専用）に判定させた: 改ざん・手順違反 11/11 検出、無害 4件で誤検出 0。
