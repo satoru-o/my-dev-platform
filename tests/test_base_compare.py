@@ -182,6 +182,50 @@ def test_AC2_比較の関数が例外を投げたら承認ラベルがあって�
     assert "pyproject.toml" in report.errors[0]
 
 
+def test_AC2_構文エラーのテストは検出で承認ラベルで通せる():
+    change = core.FileChange(
+        path="tests/test_a.py",
+        base_src="def test_a():\n    assert add(2, 3) == 5\n",
+        head_src="def test_a(:\n",
+    )
+
+    without = core.check(
+        changes=[change],
+        base_ids=frozenset(),
+        head_ids=frozenset(),
+        labels=frozenset(),
+    )
+    approved = core.check(
+        changes=[change],
+        base_ids=frozenset(),
+        head_ids=frozenset(),
+        labels=frozenset({"test-change-approved"}),
+    )
+
+    assert without.verdict == "red"
+    assert approved.verdict == "green"
+    assert [f.path for f in approved.approved] == ["tests/test_a.py"]
+
+
+def test_AC2_巨大で比較できないファイルは承認ラベルがあっても赤():
+    base = "x = 1\n" * 150_000
+    change = core.FileChange(
+        path="tests/test_big.py",
+        base_src=base,
+        head_src=base.replace("x = 1", "x = 2", 1),
+    )
+
+    report = core.check(
+        changes=[change],
+        base_ids=frozenset(),
+        head_ids=frozenset(),
+        labels=frozenset({"test-change-approved", "guard-change-approved"}),
+    )
+
+    assert report.verdict == "red"
+    assert [f.kind for f in report.findings] == ["比較できない"]
+
+
 def test_AC1_pytestの設定を変えると赤():
     change = core.FileChange(
         path="pyproject.toml",
