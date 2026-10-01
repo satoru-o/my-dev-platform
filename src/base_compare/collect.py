@@ -1,5 +1,8 @@
 """pytest の収集結果（テストID の一覧）を読む。"""
 
+import subprocess
+import sys
+
 from base_compare.gitio import ToolError
 
 
@@ -19,4 +22,20 @@ def stable_ids(collect_once) -> frozenset[str]:
 
 
 def collect_in(directory, timeout: float = 300.0) -> frozenset[str]:
-    return frozenset()  # スタブ（Red 用。わざと誤った値）
+    """ディレクトリで `pytest --collect-only` を実行し、テストID の集合を返す（テストは実行しない）。"""
+    done = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+        ],
+        cwd=directory,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+    return parse_ids(done.stdout.decode("utf-8", "replace"))
