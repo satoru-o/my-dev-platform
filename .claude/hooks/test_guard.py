@@ -406,6 +406,48 @@ def test_巨大な入力でも判定は時間内に終わる(tmp_path, name):
     assert elapsed < TIME_LIMIT_SECONDS
 
 
+# Red 5（FB 1、Q7）: heredoc の書き方のゆれ。ガードが「閉じた」と思う位置と、シェルが閉じる位置がずれると、
+# 本文のあとのコマンドを見逃す。期待値は Q7=A で承認済み。
+
+TAB = "\t"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Q7-1: タブつきの終了行でも閉じる。次の行は普通のコマンド
+        f"cat <<-'EOF'\nbody\n{TAB}EOF\ntouch .claude/x",
+        # Q7-2: `\EOF` でも、`EOF` の行で閉じる
+        "cat > specs/x.md <<\\EOF\nbody\nEOF\ntouch .claude/x",
+        # Q7-4: here-string も、受け取るのがインタプリタなら実行される
+        'bash <<< "touch .claude/x"',
+        # Q7-6、8: 行頭・末尾が空白の `EOF` は閉じ扱いにならず、本文は全部実行される（bash）
+        "bash <<'EOF'\n EOF\ntouch .claude/x\nEOF",
+        "bash <<'EOF'\nEOF \ntouch .claude/x\nEOF",
+    ],
+)
+def test_heredocの書き方のゆれでも本文のあとのコマンドを見逃さない(tmp_path, command):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, command) is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Q7-3: `\EOF` は引用符つきと同じ扱い。本文は展開されない
+        "cat > specs/x.md <<\\EOF\n$(touch .claude/x)\nEOF",
+        # Q7-5: データとして受けるだけ
+        'cat <<< "touch .claude/x"',
+        # Q7-7、8: 行頭・末尾が空白の `EOF` は閉じ扱いにならず、本文は最後の `EOF` まで続く（cat）
+        "cat > specs/x.md <<'EOF'\n EOF\ntouch .claude/x\nEOF",
+        "cat > specs/x.md <<'EOF'\nEOF \ntouch .claude/x\nEOF",
+    ],
+)
+def test_heredocの書き方のゆれでもデータとして書かれるだけなら通す(tmp_path, command):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    assert bash(root, command) is None
+
+
 # --- 実際のスクリプトを標準入力で動かす -----------------------------------------
 
 
