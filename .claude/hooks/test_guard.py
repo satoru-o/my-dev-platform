@@ -239,6 +239,22 @@ def test_変数経由で保護対象でない所に書くのは通す(tmp_path):
     assert bash(root, command) is None
 
 
+# Red 1（AC-1）: 今回の事例。書き込み先は specs/ で、本文の文章に保護パスがあるだけ
+
+
+def test_pythonのheredocで書き込み先がspecsなら本文に保護パスの文章があっても通す(
+    tmp_path,
+):
+    root = make_project(tmp_path, {"0001-a": "planned"})
+    command = (
+        "python3 - <<'EOF'\n"
+        "p='specs/0003/status.md'\n"
+        "open(p,'w').write('see `touch .claude/x`')\n"
+        "EOF"
+    )
+    assert bash(root, command) is None
+
+
 # --- 実際のスクリプトを標準入力で動かす -----------------------------------------
 
 
