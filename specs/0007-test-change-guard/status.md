@@ -2,7 +2,7 @@
 id: 0007
 slug: test-change-guard
 kind: feature # feature | chore | refactor（/req-new の最初の質問で決まる。振る舞いが変わらないなら chore か refactor）
-status: green # draft | clarifying | planned | red | green | done
+status: done # draft | clarifying | planned | red | green | done
 size: S2 # AI提案・要確認（G1）。S1 から上げた: 守る対象がテスト・pytest の設定・req.md の3つに広がり、スイッチの自動消費と git 操作の判定が加わった
 risk: [] # 暫定・要確認（タグには当たらない。ただしセキュリティ装置の変更なので、「拒否すべきものが通る」退行が最大の懸念。AC-2 と、既存のテスト133件で守る）
 ---
@@ -10,10 +10,10 @@ risk: [] # 暫定・要確認（タグには当たらない。ただしセキュ
 # 0007 test-change-guard の状態
 
 ## いま
-G3待ち。test-plan の全項目を実装し、green。下の「結果（AI下書き）」と、`guard.py` の差分を見て、よければ done にしてください。size は S2（AI提案。確認待ち）、リスクはタグなし。UNLOCK は外した（ロック済み）。
+done（G3で人間が確認済み）。変更は /req-fb（FB）で。size は S2、リスクはタグなし。UNLOCK は外してある（ロック済み）。
 
 ## 結果
-（AI下書き。done時に人間が確認して確定）
+（done時に人間が確認して確定）
 - 変更: `.claude/hooks/guard.py`（約1180行。既存のテスト、pytest の設定、実装中の `req.md` を、`HEAD` と比べて守る仕組みを足した）、`.claude/hooks/test_guard.py`（hook のテストは 133 → 311 件。178件追加）。`make check` 通過（tests/ 30件 + hook 311件）。`make check` は約36秒（以前は約13秒。git の呼び出しと、巨大な入力のテストが増えた）。
 - できたこと: AC-1（足すのは自由）、AC-2（assert・期待値・skip/xfail・関数の削除・丸ごとの置き換え・同名の定義・構文エラー・Bash 経由の書き込みを拒否）、AC-3（スイッチ。人間だけが置け、通したとき1回で消える）、AC-4（履歴を動かす git 操作は常に拒否、守る対象を戻す・消す操作は拒否）、AC-5（pytest の設定、conftest の `collect_ignore` など）、AC-6（実装中の `req.md` の AC の表）、AC-7（`HEAD` が取れないとき）を、すべてテストで確認した。
 - 本物の hook での確認（2026-10-01、このセッション）: 拒否は5種（Edit でテスト関数の名前を変える、`sed -i` で既存のテストを書き換える、`git reset --hard`、`git restore` でテストを戻す、UNLOCK があっても AI がスイッチを作る）。通すのは、新しいテストファイルの作成と削除（未コミット = 新規）。Edit ツールの本物の入力（`old_string`、`new_string`）で、判定できることを確認した。変更が起きない形で試したので、作業ツリーは、きれいなまま。
