@@ -46,6 +46,7 @@ WRITE_VERB = (
 HEREDOC_RE = re.compile(
     r"(?<!<)<<(?!<)(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|(\\?)([A-Za-z_][\w.-]*))"
 )
+HERESTRING_RE = re.compile(r"<<<[ \t]*(?:\"([^\"\n]*)\"|'([^'\n]*)'|([^\s;&|<>]*))")
 PYTHON_WORD_RE = re.compile(r"(?<![\w./-])python[\d.]*(?![\w.-])")
 
 
@@ -348,33 +349,54 @@ def bash_kinds(command: str, root: Path) -> list[str]:
     shell_parts = [shell]
     kinds: set[str] = set()
     # 受け取るコマンドの判定は、1行に `<<` が大量にあっても、同じコマンド列につき1回だけ行う
-    receivers: dict[tuple[int, tuple[int, int]], tuple[bool, bool]] = {}
-    for d in docs:
-        key = (d.line_no, d.seg)
+    receivers: dict[tuple, tuple[bool, bool]] = {}
+
+    def receiver(key: tuple, line: str, seg: tuple[int, int]) -> tuple[bool, bool]:
+        """（python か、データを受けるだけか）"""
         if key not in receivers:
-            segment = d.receiver[d.seg[0] : d.seg[1]]
+            segment = line[seg[0] : seg[1]]
             receivers[key] = (
                 bool(PYTHON_WORD_RE.search(segment)),
                 segment_is_data_only(segment),
             )
-        is_python, data_only = receivers[key]
+        return receivers[key]
+
+    for d in docs:
+        is_python, data_only = receiver(("doc", d.line_no, d.seg), d.receiver, d.seg)
         if is_python:
-            kinds |= python_kinds(d.body, root)  # python の本文は、書き込み先で判定する
+            # python の本文は、書き込み先で判定する
+            kinds |= python_kinds(d.body, root)
         elif not data_only:
-            shell_parts.append(
-                d.body
-            )  # 実行されうる本文は、シェルのコマンドとして調べる
+            # 実行されうる本文は、シェルのコマンドとして調べる
+            shell_parts.append(d.body)
         elif not d.quoted:
-            units, parsed = expansions(d.body)  # データでも、展開される部分は実行される
+            # データでも、引用符なしなら、展開される部分は実行される
+            units, parsed = expansions(d.body)
             for unit in units:
                 kinds |= set(_legacy_kinds(unit))
             if not parsed:
-                kinds.add("protected")  # 解析しきれないものは、拒否側に倒す
+                # 解析しきれないものは、拒否側に倒す
+                kinds.add("protected")
     shell = "\n".join(shell_parts)
+
+    # here-string（`<<<`）も、受け取るのがデータだけでなければ、中身が実行される
+    for line_no, line in enumerate(shell.split("\n")):
+        if "<<<" not in line:
+            continue
+        bounds = _separator_bounds(line)
+        for m in HERESTRING_RE.finditer(line):
+            seg = _segment_bounds(bounds, len(line), m.start())
+            is_python, data_only = receiver(("hs", line_no, seg), line, seg)
+            if data_only:
+                continue
+            content = next(g for g in m.groups() if g is not None)
+            if is_python or PYTHON_WORD_RE.search(content):
+                kinds |= python_kinds(content, root)
+            kinds |= set(_legacy_kinds(content))
+
     if PYTHON_WORD_RE.search(shell):
-        kinds |= python_kinds(
-            shell, root
-        )  # `python3 -c "…"` など。書き込み先で判定する
+        # `python3 -c "…"` など。書き込み先で判定する
+        kinds |= python_kinds(shell, root)
     kinds |= set(_legacy_kinds(shell))
     return [k for k in PATH_RE if k in kinds]
 
