@@ -54,6 +54,15 @@ HEREDOC_RE = re.compile(
 )
 HERESTRING_RE = re.compile(r"<<<[ \t]*(?:\"([^\"\n]*)\"|'([^'\n]*)'|([^\s;&|<>]*))")
 PYTHON_WORD_RE = re.compile(r"(?<![\w./-])python[\d.]*(?![\w.-])")
+# python 以外のインタプリタ。丁寧には解析せず、旧版と同じ粗い判定にとどめる（Q9）。
+# 他の言語（TypeScript など）を使うようになったら、拡張として別の要望で検討する。
+OTHER_INTERPRETER_RE = re.compile(
+    r"(?<![\w./-])(?:ruby|node|nodejs|perl|php|lua|deno|bun)(?![\w.-])"
+)
+# 書き込み風の文字列。`open(` の先読みは、巨大な入力で遅くならないよう、長さを区切る。
+GENERIC_WRITE_RE = re.compile(
+    r"""write_text|write_bytes|\.write\(|\bopen\([^)]{0,500}?["'][wax+]"""
+)
 
 
 def statuses(root: Path) -> list[str]:
@@ -400,6 +409,9 @@ def bash_kinds(command: str, root: Path) -> list[str]:
     if PYTHON_WORD_RE.search(shell):
         # `python3 -c "…"` など。書き込み先で判定する
         kinds |= python_kinds(shell, root)
+    if OTHER_INTERPRETER_RE.search(shell) and GENERIC_WRITE_RE.search(shell):
+        # python 以外は、書き込み風の文字列と保護パスの文字列が一緒にあれば、そのパスに書くものとみなす
+        kinds |= {k for k, path in PATH_RE.items() if re.search(path, shell)}
     kinds |= set(_legacy_kinds(shell))
     return [k for k in PATH_RE if k in kinds]
 
