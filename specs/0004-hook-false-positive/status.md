@@ -10,7 +10,7 @@ risk: [] # 暫定・要確認（タグには当たらない。ただしセキュ
 # 0004 hook-false-positive の状態
 
 ## いま
-G2待ち。`test-plan.md` の「適用しない」の理由と `⚠️` の行を見て、`discussion-log.md` の Round 2（Q4〜Q6）に回答してください。未回答は推奨で進みます。size / risk（S1、リスクなし）は暫定のままなので、ここでも確認してください。UNLOCK は置かれている（`.claude/UNLOCK`）。
+G2待ち。Round 2 の回答と FB 1 は反映済み。`discussion-log.md` の Round 3（Q7: FB 1 の具体的な入力と期待値の案、Q8: 速さのしきい値）に回答してください。未回答は推奨で進みます。`test-plan.md` の `⚠️`（2行）と、size / risk（S1、リスクなし。暫定のまま）も確認してください。UNLOCK は置かれている（`.claude/UNLOCK`）。
 
 ## 結果
 <!-- done時に記入: 何ができたか、テスト件数、気づき -->
