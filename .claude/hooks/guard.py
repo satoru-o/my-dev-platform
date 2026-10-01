@@ -23,6 +23,7 @@ Bash は、書き込みに見えるコマンドだけを見る「ベストエフ
 
 import ast
 import bisect
+import configparser
 import json
 import os
 import posixpath
@@ -30,6 +31,8 @@ import re
 import shlex
 import subprocess
 import sys
+import tomllib
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -75,15 +78,20 @@ GENERIC_WRITE_RE = re.compile(
 )
 
 
-def statuses(root: Path) -> list[str]:
-    result = []
+def status_by_dir(root: Path) -> dict[str, str]:
+    """req のディレクトリ名（`0001-a`）→ status。"""
+    result = {}
     for p in sorted((root / "specs").glob("[0-9][0-9][0-9][0-9]-*/status.md")):
         for line in p.read_text(encoding="utf-8").splitlines()[:30]:
             m = re.match(r"status:\s*([a-z]+)", line)
             if m:
-                result.append(m.group(1))
+                result[p.parent.name] = m.group(1)
                 break
     return result
+
+
+def statuses(root: Path) -> list[str]:
+    return list(status_by_dir(root).values())
 
 
 def rel_path(path: str, root: Path) -> str | None:
@@ -355,22 +363,130 @@ def _new_content(tool_name: str, tool_input: dict, path: Path) -> str | None:
     )
 
 
+# --- pytest の設定と、req.md の AC の表 -------------------------------------------------
+
+PYTEST_CONFIG_FILES = {"pyproject.toml", "pytest.ini", "tox.ini", "setup.cfg"}
+# conftest.py に足すと、テストを外せてしまう名前
+CONFTEST_CONFIG_NAMES = {
+    "collect_ignore",
+    "collect_ignore_glob",
+    "pytest_ignore_collect",
+    "pytest_collection_modifyitems",
+}
+_REQ_RE = re.compile(r"specs/([^/]+)/req\.md")
+_AC_HEAD_RE = re.compile(r"^###\s+AC-(\d+)\b")
+_TABLE_SEPARATOR_RE = re.compile(r"\|[\s:|-]+\|")
+
+
+def active_req_dirs(root: Path) -> set[str]:
+    """実装中（planned / red / green）の req のディレクトリ名。"""
+    return {d for d, s in status_by_dir(root).items() if s in ACTIVE}
+
+
+def _pytest_config(rel: str, src: str) -> object:
+    name = posixpath.basename(rel)
+    if name == "pyproject.toml":
+        return tomllib.loads(src).get("tool", {}).get("pytest")
+    cp = configparser.ConfigParser(interpolation=None, strict=False)
+    cp.read_string(src)
+    if name == "pytest.ini":
+        return {s: dict(cp[s]) for s in cp.sections()}
+    wanted = ["pytest"] if name == "tox.ini" else ["tool:pytest", "pytest"]
+    return {s: dict(cp[s]) for s in wanted if cp.has_section(s)}
+
+
+def pytest_config_reason(rel: str, base_src: str | None, new_src: str) -> str | None:
+    if base_src is None or base_src == new_src:
+        return None
+    try:
+        same = _pytest_config(rel, base_src) == _pytest_config(rel, new_src)
+    except (tomllib.TOMLDecodeError, configparser.Error, ValueError):
+        return "解析しきれない（構文エラーなど）ため、拒否側に倒した"
+    return None if same else "pytest の設定が、変わった・消えた"
+
+
+def conftest_config_reason(base_src: str | None, new_src: str) -> str | None:
+    """conftest.py に、テストを外せる名前（collect_ignore など）を、新しく足していないか。"""
+    try:
+        new_names = set(_Model(new_src).defs) & CONFTEST_CONFIG_NAMES
+        base_names = set(_Model(base_src).defs) if base_src is not None else set()
+    except (SyntaxError, ValueError, RecursionError):
+        return "解析しきれない（構文エラーなど）ため、拒否側に倒した"
+    added = new_names - base_names
+    if added:
+        return f"テストを外せる設定（{', '.join(sorted(added))}）を、足す変更"
+    return None
+
+
+def ac_rows(src: str) -> dict[str, Counter]:
+    """AC 番号 → その AC の表の行（空白をそろえたもの）。"""
+    rows: dict[str, Counter] = {}
+    current: str | None = None
+    for line in src.split("\n"):
+        m = _AC_HEAD_RE.match(line)
+        if m:
+            current = m.group(1)
+            rows.setdefault(current, Counter())
+        elif line.startswith("#"):
+            current = None
+        elif current and line.lstrip().startswith("|"):
+            norm = re.sub(r"\s+", " ", line.strip())
+            if not _TABLE_SEPARATOR_RE.fullmatch(norm):
+                rows[current][norm] += 1
+    return rows
+
+
+def req_change_reason(base_src: str | None, new_src: str) -> str | None:
+    """req.md の AC の表の、既存の行を、変えた・消した・番号を書き換えた変更なら、その理由。"""
+    if base_src is None or base_src == new_src:
+        return None
+    new = ac_rows(new_src)
+    for number, base_rows in ac_rows(base_src).items():
+        if base_rows - new.get(number, Counter()):
+            return f"AC-{number} の表の既存の行が、変わった・消えた（番号の書き換えは、削除と追加として扱う）"
+    return None
+
+
+def _guarded_kind(rel: str, root: Path) -> str | None:
+    if _is_test_py(rel) or rel.endswith("/conftest.py"):
+        return "test"
+    if rel in PYTEST_CONFIG_FILES:
+        return "pytest_config"
+    m = _REQ_RE.fullmatch(rel)
+    if m and m.group(1) in active_req_dirs(root):
+        return "req"
+    return None
+
+
 def change_reason(tool_name: str, tool_input: dict, root: Path, rel: str) -> str | None:
-    """Edit・Write が、既存のテストを黙って変えるものなら、拒否する理由。"""
-    if not _is_test_py(rel):
+    """Edit・Write が、既存のテスト・pytest の設定・req.md の AC を、黙って変えるものなら、拒否する理由。"""
+    kind = _guarded_kind(rel, root)
+    if kind is None:
         return None
     new_src = _new_content(tool_name, tool_input, root / rel)
     if new_src is None:
         return None
     try:
-        why = python_change_reason(head_content(root, rel), new_src)
+        base_src = head_content(root, rel)
     except GitError as e:
         return (
             f"「既存」の基準（HEAD）が取れないため、拒否しました（{e}）。{CHANGE_HINT}"
         )
+    if kind == "test":
+        why = python_change_reason(base_src, new_src)
+        if why is None and rel.endswith("conftest.py"):
+            why = conftest_config_reason(base_src, new_src)
+        label = "既存のテスト"
+    elif kind == "pytest_config":
+        why, label = pytest_config_reason(rel, base_src, new_src), "pytest の設定"
+    else:
+        why, label = (
+            req_change_reason(base_src, new_src),
+            "実装中の req.md の受け入れ条件",
+        )
     if why is None:
         return None
-    return f"既存のテストを変える・弱める・消す変更です（{why}）。{CHANGE_HINT}"
+    return f"{label}を変える・弱める・消す変更です（{why}）。{CHANGE_HINT}"
 
 
 # --- Bash: heredoc の解析 -----------------------------------------------------
@@ -591,13 +707,22 @@ def python_kinds(code: str, root: Path) -> set[str]:
 
 # --- Bash: 書き込み先のパス（既存のテストへの書き込みを調べる） -----------------------------
 
+_GUARDED_WORDS = (
+    "tests",
+    "conftest",
+    "pyproject",
+    "pytest.ini",
+    "tox.ini",
+    "setup.cfg",
+    "req.md",
+)
 _REDIRECT_RE = re.compile(r"""(?<![<&])>{1,2}[ \t]*["']?([^\s"';&|<>]+)""")
 _VERB_ARGS_RE = re.compile(rf"{WRITE_VERB}([^;&|\n]*)", re.MULTILINE)
 
 
 def _shell_targets(text: str) -> list[str]:
     """シェルのコマンドが書き込む（と判断できる）パスの文字列。リダイレクトの先、書き込み系のコマンドの引数。"""
-    if "tests" not in text and "conftest" not in text:
+    if not any(w in text for w in _GUARDED_WORDS):
         return []  # 守る対象に関係しない（巨大な入力で、無駄に調べない）
     targets = [m.group(1) for m in _REDIRECT_RE.finditer(text)]
     for m in _VERB_ARGS_RE.finditer(text):
@@ -619,7 +744,9 @@ def _exists_in_baseline(root: Path, rel: str) -> bool:
         return (root / rel).exists()
 
 
-_UNRESOLVED_TEST_RE = re.compile(r"(?:^|/)(?:tests(?:/|$)|conftest)")
+_UNRESOLVED_TEST_RE = re.compile(
+    r"(?:^|/)(?:tests(?:/|$)|conftest|pyproject\.toml|pytest\.ini|tox\.ini|setup\.cfg)|specs/\S*req\.md"
+)
 
 
 def bash_change_reason(targets: list[str], root: Path) -> str | None:
@@ -635,8 +762,10 @@ def bash_change_reason(targets: list[str], root: Path) -> str | None:
         rel = rel_path(t, root)
         if rel is None:
             continue
-        if rel == "tests" or (_is_test_py(rel) and _exists_in_baseline(root, rel)):
-            return f"Bash 経由で、既存のテスト（{rel}）を書き換えるコマンドです。追記は Edit ツールを使ってください。{CHANGE_HINT}"
+        if rel == "tests" or (
+            _guarded_kind(rel, root) is not None and _exists_in_baseline(root, rel)
+        ):
+            return f"Bash 経由で、既存のテスト・pytest の設定・実装中の req.md（{rel}）を書き換えるコマンドです。追記は Edit ツールを使ってください。{CHANGE_HINT}"
     return None
 
 
@@ -713,12 +842,17 @@ def _touches_guarded(path: str, root: Path) -> bool:
     rel = rel_path(literal.rstrip("/") or ".", root)
     if rel is None:
         return False
-    return (
-        rel in {"", ".", "tests", "specs"}
-        or rel.startswith("tests/")
-        or rel in GUARDED_FILES
-        or re.fullmatch(r"specs/[^/]+(?:/req\.md)?", rel) is not None
-    )
+    if rel in {"", ".", "tests"} or rel.startswith("tests/") or rel in GUARDED_FILES:
+        return True
+    active = active_req_dirs(root)  # 実装中の req の req.md（とそれを含むディレクトリ）
+    parts = rel.split("/")
+    if (
+        parts[0] == "specs"
+        and len(parts) <= 3
+        and (len(parts) < 3 or parts[2] == "req.md")
+    ):
+        return bool(active) if len(parts) == 1 else parts[1] in active
+    return False
 
 
 def _checkout_paths(args: list[str], root: Path) -> list[str]:
