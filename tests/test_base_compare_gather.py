@@ -87,6 +87,42 @@ def test_S01_削除されたテストは_HEADの内容が無い変更として�
     ]
 
 
+def test_X04_gitの失敗の表示に_パスやgitの出力を含めない(tmp_path):
+    secret_dir = tmp_path / "秘密のディレクトリ"
+    secret_dir.mkdir()
+
+    try:
+        gitio.gather_changes(secret_dir, "main")
+    except gitio.ToolError as e:
+        message = str(e)
+    else:
+        message = ""
+
+    assert message
+    assert "秘密のディレクトリ" not in message
+    assert str(tmp_path) not in message
+    assert "fatal" not in message
+
+
+def test_V01_空のテストファイルを足しただけなら_検出しない(tmp_path):
+    make_repo(tmp_path, {"docs/a.md": "# a\n"})
+    git(tmp_path, "checkout", "-q", "-b", "work")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_empty.py").write_text("")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-q", "-m", "empty")
+
+    changes = gitio.gather_changes(tmp_path, "main")
+    report = core.check(
+        changes=changes,
+        base_ids=frozenset(),
+        head_ids=frozenset(),
+        labels=frozenset(),
+    )
+
+    assert report.verdict == "green"
+
+
 def test_X03_危険な文字列を含むパスも_実行されず_パスのまま扱う(tmp_path):
     make_repo(tmp_path, {"docs/a.md": "# a\n"})
     git(tmp_path, "checkout", "-q", "-b", "work")

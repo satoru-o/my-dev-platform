@@ -321,6 +321,16 @@ def test_AC3_基準のテストが全部無くなったら赤():
     assert report.verdict == "red"
 
 
+def test_V04_テストIDが非常に多くても_消えたものだけを速く見つける():
+    base = frozenset(f"tests/test_big.py::test_{i}" for i in range(200_000))
+    head = base - {"tests/test_big.py::test_12345"}
+
+    report = core.check(changes=[], base_ids=base, head_ids=head, labels=frozenset())
+
+    assert report.verdict == "red"
+    assert [f.path for f in report.findings] == ["tests/test_big.py::test_12345"]
+
+
 def test_AC3_テストIDが増えただけなら緑():
     report = core.check(
         changes=[],
