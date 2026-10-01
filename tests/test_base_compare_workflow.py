@@ -64,6 +64,18 @@ def test_AC6_比較のjobは履歴を全部取る_checkoutに認証情報を残�
         assert "persist-credentials: false" in found[name], name
 
 
+def test_AC6_makeにcompareがあり_make_checkに含まれ_警告だけのモードで動く():
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+
+    target = re.search(r"^compare:\n((?:\t.*\n?)+)", makefile, re.MULTILINE)
+    assert target
+    assert "python -m base_compare" in target.group(1)
+    assert "--mode local" in target.group(1)
+    check = re.search(r"^check:(.*)$", makefile, re.MULTILINE)
+    assert check
+    assert "compare" in check.group(1).split()
+
+
 def test_X03_runの中にPRのタイトルやブランチ名を直接埋め込まない():
     run_lines = [
         line
