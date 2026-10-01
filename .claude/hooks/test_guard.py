@@ -480,6 +480,994 @@ def test_python以外のインタプリタでも保護パスに書かないな�
     assert bash(root, command) is None
 
 
+# --- 0007: 既存テストを黙って書き換えさせない ----------------------------------------
+# 「既存」の基準は、最後にコミットした内容（HEAD）。足すのは自由、変える・弱める・消すは拒否。
+
+BASE_TEST = """import pytest
+
+
+def test_a():
+    assert f(1) == 2
+    assert f(2) == 3
+
+
+@pytest.mark.parametrize("x", [1, 2])
+def test_b(x):
+    assert x > 0
+
+
+class TestK:
+    def test_m(self):
+        assert True
+"""
+
+
+def _git_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
+def run_git(path: Path, *args: str) -> None:
+    subprocess.run(  # noqa: S603
+        ["git", "-C", str(path), *args],  # noqa: S607
+        check=True,
+        capture_output=True,
+        env=_git_env(),
+    )
+
+
+def make_repo(
+    tmp_path: Path,
+    files: dict[str, str] | None = None,
+    statuses: dict[str, str] | None = None,
+    commit: bool = True,
+    init: bool = True,
+) -> Path:
+    """テスト用のリポジトリ。files をコミットした状態にする（commit=False ならコミット0件）。"""
+    root = make_project(tmp_path, statuses or {"0001-a": "planned"})
+    for rel, text in (files or {"tests/test_x.py": BASE_TEST}).items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+    if init:
+        run_git(root, "init", "-q")
+        run_git(root, "config", "user.email", "t@example.com")
+        run_git(root, "config", "user.name", "t")
+        if commit:
+            run_git(root, "add", "-A")
+            run_git(root, "commit", "-q", "-m", "base")
+    return root
+
+
+def change_edit(
+    root: Path, rel: str, old: str, new: str, replace_all: bool = False
+) -> str | None:
+    tool_input = {
+        "file_path": str(root / rel),
+        "old_string": old,
+        "new_string": new,
+        "replace_all": replace_all,
+    }
+    return guard.decide("Edit", tool_input, root)
+
+
+def change_write(root: Path, rel: str, content: str) -> str | None:
+    return guard.decide(
+        "Write", {"file_path": str(root / rel), "content": content}, root
+    )
+
+
+TEST_X = "tests/test_x.py"
+APPEND_AFTER = "        assert True\n"  # BASE_TEST の末尾（一意）
+
+# AC-1（足すのは自由）: 今の実装でも通る網
+
+
+def test_AC1_新しいテスト関数を末尾に足すのは通す(tmp_path):
+    root = make_repo(tmp_path)
+    new = APPEND_AFTER + "\n\ndef test_new():\n    assert f(3) == 4\n"
+    assert change_edit(root, TEST_X, APPEND_AFTER, new) is None
+
+
+def test_AC1_まだ無いテストファイルを作るのは通す(tmp_path):
+    root = make_repo(tmp_path)
+    assert (
+        change_write(root, "tests/test_new.py", "def test_n():\n    assert True\n")
+        is None
+    )
+
+
+def test_AC1_parametrizeのリストに値を足すのは通す(tmp_path):
+    root = make_repo(tmp_path)
+    assert change_edit(root, TEST_X, "[1, 2]", "[1, 2, 3]") is None
+
+
+def test_内容の情報がない呼び出しは今までどおり通す(tmp_path):
+    root = make_repo(tmp_path)
+    assert guard.decide("Edit", {"file_path": str(root / TEST_X)}, root) is None
+
+
+# AC-2（変える・弱める・消すは拒否）
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("    assert f(2) == 3\n", ""),  # assert 行を消す
+        ("    assert f(1) == 2\n", "    assert f(1) == 5\n"),  # 期待値を変える
+        ("[1, 2]", "[1, 9]"),  # parametrize の値を変える
+        ("    assert x > 0\n", "    assert x >= 0\n"),  # 比較を弱める
+    ],
+)
+def test_AC2_既存テストのassertや期待値を変える_消すは拒否する(tmp_path, old, new):
+    root = make_repo(tmp_path)
+    assert change_edit(root, TEST_X, old, new) is not None
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("def test_a():", "@pytest.mark.skip\ndef test_a():"),
+        ("def test_a():", "@pytest.mark.xfail\ndef test_a():"),
+        ("    assert f(1) == 2\n", "    pytest.skip('x')\n    assert f(1) == 2\n"),
+    ],
+)
+def test_AC2_既存テストにskipやxfailを付けるのは拒否する(tmp_path, old, new):
+    root = make_repo(tmp_path)
+    assert change_edit(root, TEST_X, old, new) is not None
+
+
+@pytest.mark.parametrize(
+    "appended",
+    [
+        "\n\n@pytest.mark.skip\ndef test_new():\n    assert True\n",
+        "\n\n@pytest.mark.xfail\ndef test_new():\n    assert False\n",
+        "\n\npytestmark = pytest.mark.skip\n",
+    ],
+)
+def test_AC2_新しく足すテストでもskipやxfailやpytestmarkは拒否する(tmp_path, appended):
+    root = make_repo(tmp_path)
+    assert change_edit(root, TEST_X, APPEND_AFTER, APPEND_AFTER + appended) is not None
+
+
+def test_AC2_既存テスト関数を消すのは拒否する(tmp_path):
+    root = make_repo(tmp_path)
+    old = "def test_a():\n    assert f(1) == 2\n    assert f(2) == 3\n\n\n"
+    assert change_edit(root, TEST_X, old, "") is not None
+
+
+def test_AC2_既存ファイルを丸ごと置き換えてassertが減るのは拒否する(tmp_path):
+    root = make_repo(tmp_path)
+    assert change_write(root, TEST_X, "def test_only():\n    assert True\n") is not None
+
+
+def test_AC2_内容が変わらない置き換えは通す(tmp_path):
+    root = make_repo(tmp_path)
+    assert change_write(root, TEST_X, BASE_TEST) is None
+
+
+def test_AC2_構文エラーになる変更は拒否する(tmp_path):
+    root = make_repo(tmp_path)
+    assert (
+        change_edit(root, TEST_X, "    assert f(1) == 2\n", "    assert f(1) ==\n")
+        is not None
+    )
+
+
+# Q12: 同名の定義（あとの定義が前を上書きする）
+
+
+@pytest.mark.parametrize(
+    "appended",
+    [
+        "\n\ndef test_a():\n    assert True\n",  # 同名の関数
+        "\n    def test_m(self):\n        assert False\n",  # 同じクラスの同名メソッド
+        "\n\ntest_a = lambda: None\n",  # 代入での上書き
+    ],
+)
+def test_Q12_同名の定義が増えるのは拒否する(tmp_path, appended):
+    root = make_repo(tmp_path)
+    assert change_edit(root, TEST_X, APPEND_AFTER, APPEND_AFTER + appended) is not None
+
+
+def test_Q12_別のクラスの同名メソッドは通す(tmp_path):
+    root = make_repo(tmp_path)
+    appended = "\n\nclass TestOther:\n    def test_m(self):\n        assert True\n"
+    assert change_edit(root, TEST_X, APPEND_AFTER, APPEND_AFTER + appended) is None
+
+
+# Q2: 「既存」の基準は HEAD。未コミットのテストは自由に直せる
+
+
+def test_Q2_HEADに無いファイルは自由に直せる(tmp_path):
+    root = make_repo(tmp_path)
+    (root / "tests/test_u.py").write_text(
+        "def test_u():\n    assert 1 == 1\n", encoding="utf-8"
+    )
+    assert (
+        change_edit(root, "tests/test_u.py", "assert 1 == 1", "assert 1 == 2") is None
+    )
+
+
+def test_Q2_未コミットで足したテストは直せるがHEADの行は変えられない(tmp_path):
+    root = make_repo(tmp_path)
+    p = root / TEST_X
+    p.write_text(BASE_TEST + "\n\ndef test_u():\n    assert 1 == 1\n", encoding="utf-8")
+    assert change_edit(root, TEST_X, "assert 1 == 1", "assert 1 == 2") is None
+    assert change_edit(root, TEST_X, "    assert f(2) == 3\n", "") is not None
+
+
+# Q11: HEAD が取れないとき
+
+
+def test_Q11_コミットが0件ならすべて新規として通す(tmp_path):
+    root = make_repo(tmp_path, commit=False)
+    assert change_edit(root, TEST_X, "    assert f(2) == 3\n", "") is None
+
+
+def test_Q11_gitのリポジトリではないなら拒否する(tmp_path):
+    root = make_repo(tmp_path, init=False)
+    assert (
+        change_edit(
+            root,
+            TEST_X,
+            "    assert f(1) == 2\n",
+            "    assert f(1) == 2\n    assert True\n",
+        )
+        is not None
+    )
+
+
+def test_Q11_gitコマンドが無いなら拒否する(tmp_path, monkeypatch):
+    root = make_repo(tmp_path)
+    monkeypatch.setenv("PATH", str(tmp_path / "no-such-dir"))
+    assert (
+        change_edit(
+            root,
+            TEST_X,
+            "    assert f(1) == 2\n",
+            "    assert f(1) == 2\n    assert True\n",
+        )
+        is not None
+    )
+
+
+def test_Q11_gitが時間内に答えないなら拒否する(tmp_path, monkeypatch):
+    root = make_repo(tmp_path)
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    script = fake / "git"
+    script.write_text("#!/bin/sh\nsleep 5\n", encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", str(fake))
+    monkeypatch.setattr(guard, "GIT_TIMEOUT_SECONDS", 0.3)
+    assert (
+        change_edit(
+            root,
+            TEST_X,
+            "    assert f(1) == 2\n",
+            "    assert f(1) == 2\n    assert True\n",
+        )
+        is not None
+    )
+
+
+def test_Q11_GIT_DIRを細工しても判定は変わらない(tmp_path, monkeypatch):
+    root = make_repo(tmp_path / "real")
+    evil = tmp_path / "evil"
+    evil.mkdir()
+    run_git(
+        evil, "init", "-q"
+    )  # コミット0件のリポジトリ（これが基準にされると、すべて「新規」で通ってしまう）
+    monkeypatch.setenv("GIT_DIR", str(evil / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(evil))
+    assert change_edit(root, TEST_X, "    assert f(2) == 3\n", "") is not None
+    assert (
+        change_edit(
+            root,
+            TEST_X,
+            APPEND_AFTER,
+            APPEND_AFTER + "\n\ndef test_n():\n    assert True\n",
+        )
+        is None
+    )
+
+
+# Q5: tests/ の下の既存の Python ファイル（conftest.py、補助モジュール）にも、同じ判定
+
+CONFTEST = "import pytest\n\n\n@pytest.fixture\ndef client():\n    return 1\n"
+
+
+def test_Q5_conftestとtests配下の補助モジュールにも同じ判定をする(tmp_path):
+    root = make_repo(
+        tmp_path,
+        {
+            TEST_X: BASE_TEST,
+            "tests/conftest.py": CONFTEST,
+            "tests/helpers.py": "VALUE = 1\n",
+            "conftest.py": CONFTEST,
+        },
+    )
+    assert change_edit(root, "tests/conftest.py", "return 1", "return 2") is not None
+    assert change_edit(root, "tests/helpers.py", "VALUE = 1", "VALUE = 2") is not None
+    assert change_edit(root, "conftest.py", "return 1", "return 2") is not None
+    # 足すのは自由
+    assert (
+        change_edit(root, "tests/helpers.py", "VALUE = 1\n", "VALUE = 1\nOTHER = 2\n")
+        is None
+    )
+
+
+def test_Q5_Python以外のデータは対象外(tmp_path):
+    root = make_repo(tmp_path, {TEST_X: BASE_TEST, "tests/data.json": '{"a": 1}\n'})
+    assert change_write(root, "tests/data.json", '{"a": 2}\n') is None
+
+
+# Q3: Bash 経由の、既存のテストファイルへの書き込みは、すべて拒否。まだ無いファイルへの書き込みは通す
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sed -i 's/201/200/' tests/test_x.py",
+        "echo x >> tests/test_x.py",
+        "echo x > tests/test_x.py",
+        "cat >> tests/test_x.py <<'EOF'\ndef test_n():\n    assert True\nEOF",
+        "mv tests/test_x.py /tmp/y.py",
+        "rm tests/test_x.py",
+        "tee tests/test_x.py",
+        "python3 -c \"open('tests/test_x.py','a').write('x')\"",
+        "sed -i 's/a/b/' tests/*.py",
+        "echo x >> tests/conftest.py",
+    ],
+)
+def test_Q3_既存のテストファイルへのBash経由の書き込みは拒否する(tmp_path, command):
+    root = make_repo(tmp_path, {TEST_X: BASE_TEST, "tests/conftest.py": CONFTEST})
+    assert bash(root, command) is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo 'def test_n(): pass' > tests/test_new.py",
+        "cat > tests/test_new.py <<'EOF'\ndef test_n():\n    assert True\nEOF",
+        "python3 -c \"open('tests/test_new.py','w').write('x')\"",
+        "cp /tmp/a.py tests/test_new.py",
+    ],
+)
+def test_Q3_まだ無いテストファイルへのBash経由の書き込みは通す(tmp_path, command):
+    root = make_repo(tmp_path)
+    assert bash(root, command) is None
+
+
+def test_Q3_未コミットのファイルは既存ではないので通す(tmp_path):
+    root = make_repo(tmp_path)
+    (root / "tests/test_u.py").write_text(
+        "def test_u():\n    assert True\n", encoding="utf-8"
+    )
+    assert bash(root, "echo x >> tests/test_u.py") is None
+
+
+def test_Q3_Python以外のデータへの書き込みは通す(tmp_path):
+    root = make_repo(tmp_path, {TEST_X: BASE_TEST, "tests/data.json": "{}\n"})
+    assert bash(root, "echo '{}' > tests/data.json") is None
+
+
+def test_Q3_gitが使えないとき_ディスクにあるファイルは拒否_無いファイルは通す(tmp_path):
+    root = make_repo(tmp_path, init=False)
+    assert bash(root, "echo x >> tests/test_x.py") is not None
+    assert bash(root, "echo x > tests/test_new.py") is None
+
+
+# AC-3: 解除のスイッチ（.claude/ALLOW_TEST_CHANGE）は、人間だけが置け、1回で消える
+
+SWITCH_PATH = ".claude/ALLOW_TEST_CHANGE"
+
+
+def place_switch(root: Path) -> Path:
+    p = root / SWITCH_PATH
+    p.parent.mkdir(exist_ok=True)
+    p.write_text("", encoding="utf-8")
+    return p
+
+
+def place_unlock(root: Path) -> None:
+    (root / ".claude").mkdir(exist_ok=True)
+    (root / ".claude/UNLOCK").write_text("", encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "touch .claude/ALLOW_TEST_CHANGE",
+        "echo > .claude/ALLOW_TEST_CHANGE",
+        "cp /tmp/x .claude/ALLOW_TEST_CHANGE",
+        "mv /tmp/x .claude/ALLOW_TEST_CHANGE",
+        "ln -s /tmp/x .claude/ALLOW_TEST_CHANGE",
+        "rm .claude/ALLOW_TEST_CHANGE",
+    ],
+)
+def test_AC3_AIがスイッチを作る_触るのは_UNLOCKがあっても拒否する(tmp_path, command):
+    root = make_repo(tmp_path)
+    place_unlock(root)
+    assert bash(root, command) is not None
+
+
+@pytest.mark.parametrize("tool", ["Write", "Edit"])
+def test_AC3_スイッチをWriteやEditで作るのも_UNLOCKがあっても拒否する(tmp_path, tool):
+    root = make_repo(tmp_path)
+    place_unlock(root)
+    path = str(root / SWITCH_PATH)
+    tool_input = {
+        "file_path": path,
+        "content": "",
+        "old_string": "a",
+        "new_string": "b",
+    }
+    assert guard.decide(tool, tool_input, root) is not None
+
+
+def test_AC3_スイッチがあれば既存テストの変更が通り_通した時点でスイッチが消える(
+    tmp_path,
+):
+    root = make_repo(tmp_path)
+    switch = place_switch(root)
+
+    assert change_edit(root, TEST_X, "    assert f(2) == 3\n", "") is None
+    assert not switch.exists()
+
+
+def test_AC3_スイッチが消えたあとの同じ変更は拒否する(tmp_path):
+    root = make_repo(tmp_path)
+    place_switch(root)
+    assert change_edit(root, TEST_X, "    assert f(2) == 3\n", "") is None
+
+    assert change_edit(root, TEST_X, "    assert f(2) == 3\n", "") is not None
+
+
+def test_AC3_Bash経由の変更もスイッチで通り_スイッチが消える(tmp_path):
+    root = make_repo(tmp_path)
+    switch = place_switch(root)
+
+    assert bash(root, "sed -i 's/201/200/' tests/test_x.py") is None
+    assert not switch.exists()
+
+
+def test_AC3_守る対象に触れない呼び出しでは_スイッチは消えない(tmp_path):
+    root = make_repo(tmp_path)
+    switch = place_switch(root)
+
+    assert bash(root, "git status") is None
+    assert change_edit(root, "docs/x.md", "a", "b") is None
+    assert (
+        change_write(root, "tests/test_new.py", "def test_n():\n    assert True\n")
+        is None
+    )
+    assert switch.exists()
+
+
+def test_AC3_スイッチがなくても通る変更では_何も起きない(tmp_path):
+    root = make_repo(tmp_path)
+    new = APPEND_AFTER + "\n\ndef test_new():\n    assert True\n"
+    assert change_edit(root, TEST_X, APPEND_AFTER, new) is None
+
+
+def test_AC3_スイッチは_redの間のtests書き込み禁止を解かない(tmp_path):
+    root = make_repo(tmp_path, statuses={"0001-a": "red"})
+    switch = place_switch(root)
+    assert change_edit(root, TEST_X, "    assert f(2) == 3\n", "") is not None
+    assert switch.exists()
+
+
+# AC-4: HEAD を動かす・書き換える git 操作、ファイルを別の内容に戻す git 操作
+
+HISTORY_COMMANDS = [
+    "git commit --amend",
+    "git commit --amend -m x",
+    "git rebase main",
+    "git rebase -i HEAD~3",
+    "git reset --hard",
+    "git reset --hard HEAD~1",
+    "git reset --soft HEAD~1",
+    "git reset --mixed abc123",
+    "git reset HEAD~2",
+    "git -C . reset --hard",
+    "git --git-dir=.git reset --hard",
+    "git -c core.editor=true commit --amend",
+    "echo hi && git reset --hard",
+    "git status\ngit reset --hard",
+    "true | git rebase main",
+]
+
+
+@pytest.mark.parametrize("command", HISTORY_COMMANDS)
+def test_AC4_履歴を動かす_書き換えるgit操作は常に拒否する(tmp_path, command):
+    root = make_repo(tmp_path)
+    assert bash(root, command) is not None
+
+
+def test_AC4_履歴を動かす操作は_スイッチがあっても拒否し_スイッチは消えない(tmp_path):
+    root = make_repo(tmp_path)
+    switch = place_switch(root)
+    assert bash(root, "git reset --hard HEAD~1") is not None
+    assert switch.exists()
+
+
+RESTORE_COMMANDS = [
+    "git checkout HEAD~1 -- tests/test_x.py",
+    "git checkout -- tests/test_x.py",
+    "git checkout main -- tests",
+    "git restore tests/test_x.py",
+    "git restore --source=HEAD~1 tests/test_x.py",
+    "git restore --source HEAD~1 tests/",
+    "git restore -s HEAD~1 tests/test_x.py",
+    "git restore .",
+    "git checkout -- .",
+    "git restore tests/*.py",
+    "git rm tests/test_x.py",
+    "git mv tests/test_x.py tests/test_y.py",
+    "git restore conftest.py",
+    "git checkout HEAD~1 -- pyproject.toml",
+]
+
+
+@pytest.mark.parametrize("command", RESTORE_COMMANDS)
+def test_AC4_守る対象のファイルを戻す_消すgit操作は拒否する(tmp_path, command):
+    root = make_repo(
+        tmp_path,
+        {
+            TEST_X: BASE_TEST,
+            "conftest.py": CONFTEST,
+            "pyproject.toml": "[project]\nname = 'x'\n",
+        },
+    )
+    assert bash(root, command) is not None
+
+
+def test_AC4_ファイルを戻す操作は_スイッチがあれば通り_スイッチが消える(tmp_path):
+    root = make_repo(tmp_path)
+    switch = place_switch(root)
+    assert bash(root, "git checkout HEAD~1 -- tests/test_x.py") is None
+    assert not switch.exists()
+
+
+ALLOWED_GIT_COMMANDS = [
+    "git add -A",
+    "git add tests/test_x.py",
+    "git commit -m 'msg'",
+    "git commit -q -m 'git reset --hard は危険'",
+    "echo 'git reset --hard'",
+    "git checkout main",
+    "git checkout -b feat/x",
+    "git checkout -B feat/x",
+    "git reset",
+    "git reset -q",
+    "git reset HEAD",
+    "git reset -- tests/test_x.py",
+    "git reset tests/test_x.py",
+    "git status",
+    "git diff",
+    "git log --oneline",
+    "git checkout HEAD~1 -- src/x.py",
+    "git restore src/x.py",
+    "git restore --staged tests/test_x.py",
+    "git stash",
+    "git push",
+]
+
+
+@pytest.mark.parametrize("command", ALLOWED_GIT_COMMANDS)
+def test_AC4_いつも使う無害なgit操作は通す(tmp_path, command):
+    root = make_repo(tmp_path)
+    assert bash(root, command) is None
+
+
+# AC-5: pytest の設定の変更は、承認が要る（足す・消す・変えるの区別なし）
+
+PYPROJECT = """[project]
+name = "x"
+
+[tool.pytest.ini_options]
+testpaths = ["tests", ".claude/hooks"]
+addopts = "-q"
+markers = ["a: b"]
+
+[tool.ruff]
+line-length = 88
+"""
+PYTEST_INI = "[pytest]\naddopts = -q\n"
+TOX_INI = "[tox]\nenvlist = py\n\n[pytest]\naddopts = -q\n"
+SETUP_CFG = "[metadata]\nname = x\n\n[tool:pytest]\naddopts = -q\n"
+
+
+def make_config_repo(tmp_path: Path) -> Path:
+    files = {
+        TEST_X: BASE_TEST,
+        "pyproject.toml": PYPROJECT,
+        "pytest.ini": PYTEST_INI,
+        "tox.ini": TOX_INI,
+        "setup.cfg": SETUP_CFG,
+        "tests/conftest.py": CONFTEST,
+    }
+    return make_repo(tmp_path, files)
+
+
+@pytest.mark.parametrize(
+    ("rel", "old", "new"),
+    [
+        ("pyproject.toml", 'addopts = "-q"', "addopts = \"-q -k 'not slow'\""),
+        (
+            "pyproject.toml",
+            'testpaths = ["tests", ".claude/hooks"]',
+            'testpaths = ["tests"]',
+        ),
+        ("pyproject.toml", 'markers = ["a: b"]', 'markers = ["a: b", "c: d"]'),
+        ("pyproject.toml", 'addopts = "-q"\n', ""),
+        ("pytest.ini", "addopts = -q", "addopts = -q --deselect x"),
+        ("tox.ini", "[pytest]\naddopts = -q", "[pytest]\naddopts = -q -k nothing"),
+        (
+            "setup.cfg",
+            "[tool:pytest]\naddopts = -q",
+            "[tool:pytest]\naddopts = -q -k nothing",
+        ),
+    ],
+)
+def test_AC5_pytestの設定の変更は拒否する(tmp_path, rel, old, new):
+    root = make_config_repo(tmp_path)
+    assert change_edit(root, rel, old, new) is not None
+
+
+@pytest.mark.parametrize(
+    ("rel", "old", "new"),
+    [
+        ("pyproject.toml", "line-length = 88", "line-length = 100"),
+        ("pyproject.toml", 'name = "x"', 'name = "y"'),
+        ("tox.ini", "envlist = py", "envlist = py,lint"),
+        ("setup.cfg", "name = x", "name = y"),
+    ],
+)
+def test_AC5_pytestの設定でない部分の変更は通す(tmp_path, rel, old, new):
+    root = make_config_repo(tmp_path)
+    assert change_edit(root, rel, old, new) is None
+
+
+def test_AC5_pyprojectからpytestの節を消す置き換えは拒否する(tmp_path):
+    root = make_config_repo(tmp_path)
+    assert change_write(root, "pyproject.toml", '[project]\nname = "x"\n') is not None
+
+
+def test_AC5_構文エラーになる設定の変更は拒否する(tmp_path):
+    root = make_config_repo(tmp_path)
+    assert change_edit(root, "pyproject.toml", 'name = "x"', 'name = "x') is not None
+
+
+@pytest.mark.parametrize(
+    "appended",
+    [
+        '\ncollect_ignore = ["test_x.py"]\n',
+        '\ncollect_ignore_glob = ["*.py"]\n',
+        "\ndef pytest_collection_modifyitems(items):\n    items.clear()\n",
+        "\ndef pytest_ignore_collect(collection_path):\n    return True\n",
+    ],
+)
+def test_AC5_conftestに_テストを外す設定を足すのは拒否する(tmp_path, appended):
+    root = make_config_repo(tmp_path)
+    old = "    return 1\n"
+    assert change_edit(root, "tests/conftest.py", old, old + appended) is not None
+
+
+def test_AC5_conftestにfixtureを足すのは通す(tmp_path):
+    root = make_config_repo(tmp_path)
+    old = "    return 1\n"
+    new = old + "\n\n@pytest.fixture\ndef other():\n    return 2\n"
+    assert change_edit(root, "tests/conftest.py", old, new) is None
+
+
+def test_AC5_Bash経由の設定ファイルへの書き込みは拒否する(tmp_path):
+    root = make_config_repo(tmp_path)
+    assert bash(root, "sed -i 's/88/100/' pyproject.toml") is not None
+    assert bash(root, "echo x >> pytest.ini") is not None
+
+
+def test_AC5_スイッチがあれば設定の変更が通り_スイッチが消える(tmp_path):
+    root = make_config_repo(tmp_path)
+    switch = place_switch(root)
+    assert change_edit(root, "pyproject.toml", 'addopts = "-q"\n', "") is None
+    assert not switch.exists()
+
+
+# AC-6: 実装中（planned / red / green）は、req.md の AC の表の既存の行を、黙って変えさせない
+
+REQ_MD = """# 0001 a
+
+## 受け入れ条件
+
+### AC-1 foo
+
+| 入力 | 期待される出力 | 出典 |
+| --- | --- | --- |
+| a | 201 | [人] |
+| b | 422 | [人] |
+
+### AC-2 bar
+
+| 入力 | 期待される出力 |
+| --- | --- |
+| c | 200 |
+
+## やらないこと
+- x
+"""
+REQ = "specs/0001-a/req.md"
+
+
+@pytest.mark.parametrize("status", ["planned", "red", "green"])
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("| b | 422 | [人] |\n", "| b | 200 | [人] |\n"),  # 期待値を変える
+        ("| b | 422 | [人] |\n", ""),  # 行を消す
+        ("### AC-2 bar", "### AC-3 bar"),  # AC 番号の書き換え（削除と追加として扱う）
+        ("| c | 200 |\n", "| c | 201 |\n"),
+    ],
+)
+def test_AC6_実装中のreq_mdのACの既存の行の変更_削除は拒否する(
+    tmp_path, status, old, new
+):
+    root = make_repo(
+        tmp_path, {TEST_X: BASE_TEST, REQ: REQ_MD}, statuses={"0001-a": status}
+    )
+    assert change_edit(root, REQ, old, new) is not None
+
+
+def test_AC6_実装中でもACの表に新しい行や新しいACを足すのは通す(tmp_path):
+    root = make_repo(tmp_path, {TEST_X: BASE_TEST, REQ: REQ_MD})
+    assert (
+        change_edit(
+            root,
+            REQ,
+            "| b | 422 | [人] |\n",
+            "| b | 422 | [人] |\n| d | 404 | [案→承認] |\n",
+        )
+        is None
+    )
+    new_ac = "\n### AC-3 baz\n\n| 入力 | 期待される出力 |\n| --- | --- |\n| e | 200 |\n"
+    assert (
+        change_edit(root, REQ, "## やらないこと", new_ac + "\n## やらないこと") is None
+    )
+
+
+def test_AC6_実装中でもAC以外の文章の変更は通す(tmp_path):
+    root = make_repo(tmp_path, {TEST_X: BASE_TEST, REQ: REQ_MD})
+    assert change_edit(root, REQ, "- x\n", "- x\n- y\n") is None
+    assert change_edit(root, REQ, "### AC-1 foo", "### AC-1 fooの見出しを直す") is None
+
+
+@pytest.mark.parametrize("status", ["draft", "clarifying", "done"])
+def test_AC6_実装中でなければreq_mdのACの表を変えてよい(tmp_path, status):
+    root = make_repo(
+        tmp_path, {TEST_X: BASE_TEST, REQ: REQ_MD}, statuses={"0001-a": status}
+    )
+    assert (
+        change_edit(root, REQ, "| b | 422 | [人] |\n", "| b | 200 | [人] |\n") is None
+    )
+
+
+def test_AC6_別のreqの状態は影響しない(tmp_path):
+    req_b = REQ_MD.replace("0001 a", "0002 b")
+    files = {TEST_X: BASE_TEST, REQ: REQ_MD, "specs/0002-b/req.md": req_b}
+    root = make_repo(tmp_path, files, statuses={"0001-a": "planned", "0002-b": "done"})
+    old, new = "| b | 422 | [人] |\n", "| b | 200 | [人] |\n"
+    assert change_edit(root, "specs/0002-b/req.md", old, new) is None
+    assert change_edit(root, REQ, old, new) is not None
+
+
+def test_AC6_HEADに無い新しいreq_mdは自由に書ける(tmp_path):
+    root = make_repo(tmp_path)
+    assert change_write(root, "specs/0001-a/req.md", REQ_MD) is None
+
+
+def test_AC6_Bash経由の実装中のreq_mdへの書き込みは拒否する(tmp_path):
+    root = make_repo(tmp_path, {TEST_X: BASE_TEST, REQ: REQ_MD})
+    assert bash(root, "sed -i 's/422/200/' specs/0001-a/req.md") is not None
+    assert bash(root, "git restore specs/0001-a/req.md") is not None
+
+
+def test_AC6_スイッチがあればreq_mdの変更が通り_スイッチが消える(tmp_path):
+    root = make_repo(tmp_path, {TEST_X: BASE_TEST, REQ: REQ_MD})
+    switch = place_switch(root)
+    assert (
+        change_edit(root, REQ, "| b | 422 | [人] |\n", "| b | 200 | [人] |\n") is None
+    )
+    assert not switch.exists()
+
+
+# V-04（0007）: 巨大な入力でも、2秒以内に判定する（git の呼び出しや、ファイルの解析が増えたため）
+
+_CHILD_JSON = (
+    "import json, sys, time\n"
+    "from pathlib import Path\n"
+    "sys.dont_write_bytecode = True\n"
+    f"sys.path.insert(0, {str(GUARD.parent)!r})\n"
+    "import guard\n"
+    "payload = json.load(sys.stdin)\n"
+    "start = time.perf_counter()\n"
+    "guard.decide(payload['tool'], payload['input'], Path(sys.argv[1]))\n"
+    "print(time.perf_counter() - start)\n"
+)
+
+
+def decide_seconds_for(root: Path, tool: str, tool_input: dict) -> float | None:
+    """Edit・Write・Bash の判定にかかった秒数。上限を超えたら None（別プロセスで、上限で打ち切る）。"""
+    try:
+        done = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", _CHILD_JSON, str(root)],
+            input=json.dumps({"tool": tool, "input": tool_input}),
+            capture_output=True,
+            text=True,
+            timeout=TIME_LIMIT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    return float(done.stdout)
+
+
+def _many_tests(n: int) -> str:
+    return "".join(f"\n\ndef test_n{i}():\n    assert {i} == {i}\n" for i in range(n))
+
+
+def _big_req(n: int) -> str:
+    rows = "".join(f"| in{i} | out{i} | [人] |\n" for i in range(n))
+    return REQ_MD.replace("| a | 201 | [人] |\n", "| a | 201 | [人] |\n" + rows)
+
+
+SLOW_CHANGE_CASES = {
+    "数MBのテストの追加（Write）": lambda root: (
+        "Write",
+        {"file_path": str(root / TEST_X), "content": BASE_TEST + _many_tests(60_000)},
+    ),
+    "数MBのテストの追加（Edit）": lambda root: (
+        "Edit",
+        {
+            "file_path": str(root / TEST_X),
+            "old_string": APPEND_AFTER,
+            "new_string": APPEND_AFTER + _many_tests(60_000),
+        },
+    ),
+    "巨大な req.md の書き換え": lambda root: (
+        "Write",
+        {
+            "file_path": str(root / REQ),
+            "content": _big_req(30_000).replace("| b | 422 |", "| b | 200 |"),
+        },
+    ),
+    "同じパスを大量に並べた Bash": lambda root: (
+        "Bash",
+        {"command": "sed -i x " + "tests/test_x.py " * 200_000},
+    ),
+    "異なるパスを大量に並べた Bash": lambda root: (
+        "Bash",
+        {"command": "".join(f"echo x > tests/t{i}.py\n" for i in range(50_000))},
+    ),
+    "1行に git が大量": lambda root: ("Bash", {"command": "git status; " * 100_000}),
+    "git が大量の行": lambda root: ("Bash", {"command": "git status\n" * 100_000}),
+    "git restore に大量のパス": lambda root: (
+        "Bash",
+        {"command": "git restore " + " ".join(f"src/f{i}.py" for i in range(100_000))},
+    ),
+}
+
+
+@pytest.mark.parametrize("name", list(SLOW_CHANGE_CASES))
+def test_V04_テストの変更の判定も_巨大な入力で時間内に終わる(tmp_path, name):
+    files = {TEST_X: BASE_TEST, REQ: REQ_MD}
+    root = make_repo(tmp_path, files)
+    tool, tool_input = SLOW_CHANGE_CASES[name](root)
+
+    elapsed = decide_seconds_for(root, tool, tool_input)
+
+    assert elapsed is not None, f"{name}: {TIME_LIMIT_SECONDS}秒以内に終わらなかった"
+
+
+def test_V04_HEADが巨大なテストファイルへの小さな追加も時間内に終わる(tmp_path):
+    root = make_repo(tmp_path, {TEST_X: BASE_TEST + _many_tests(60_000)})
+    new = APPEND_AFTER + "\n\ndef test_small():\n    assert True\n"
+    tool_input = {
+        "file_path": str(root / TEST_X),
+        "old_string": APPEND_AFTER,
+        "new_string": new,
+    }
+
+    elapsed = decide_seconds_for(root, "Edit", tool_input)
+
+    assert elapsed is not None, f"{TIME_LIMIT_SECONDS}秒以内に終わらなかった"
+
+
+# X-03 / V-03（0007）: パスの別の書き方、日本語・絵文字・CRLF
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "./tests/test_x.py",
+        "tests/../tests/test_x.py",
+        "tests//test_x.py",
+        "src/../tests/test_x.py",
+    ],
+)
+def test_X03_パスの別の書き方でも同じ判定をする(tmp_path, path):
+    root = make_repo(tmp_path)
+    assert change_edit(root, path, "    assert f(2) == 3\n", "") is not None
+    assert bash(root, f"sed -i 's/a/b/' {path}") is not None
+    assert (
+        change_edit(
+            root,
+            path,
+            APPEND_AFTER,
+            APPEND_AFTER + "\n\ndef test_n():\n    assert True\n",
+        )
+        is None
+    )
+
+
+def test_X03_絶対パスでも同じ判定をする(tmp_path):
+    root = make_repo(tmp_path)
+    absolute = str(root / TEST_X)
+    assert change_edit(root, absolute, "    assert f(2) == 3\n", "") is not None
+    assert bash(root, f"echo x >> {absolute}") is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo $(sed -i 's/a/b/' tests/test_x.py)",
+        "echo `sed -i 's/a/b/' tests/test_x.py`",
+        "true && sed -i 's/a/b/' tests/test_x.py",
+        "cd tests && sed -i 's/a/b/' test_x.py; true",
+    ],
+)
+def test_X03_コマンド置換や連結の中の書き込みも拒否する(tmp_path, command):
+    root = make_repo(tmp_path)
+    assert bash(root, command) is not None
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".claude/./ALLOW_TEST_CHANGE",
+        ".claude//ALLOW_TEST_CHANGE",
+        "src/../.claude/ALLOW_TEST_CHANGE",
+    ],
+)
+def test_X03_スイッチのパスの別の書き方でも_AIは作れない(tmp_path, path):
+    root = make_repo(tmp_path)
+    place_unlock(root)
+    assert (
+        guard.decide("Write", {"file_path": str(root / path), "content": ""}, root)
+        is not None
+    )
+    assert bash(root, f"touch {path}") is not None
+
+
+JA_TEST = "def test_日本語の名前():\n    assert f(1) == 2\n    assert f('🍎') == 3\n"
+
+
+def test_V03_日本語と絵文字のテストにも同じ判定をする(tmp_path):
+    root = make_repo(tmp_path, {TEST_X: JA_TEST})
+    assert change_edit(root, TEST_X, "    assert f('🍎') == 3\n", "") is not None
+    assert change_edit(root, TEST_X, "== 3", "== 4") is not None
+    new = "    assert f('🍎') == 3\n\n\ndef test_足す():\n    assert '🍎'\n"
+    assert change_edit(root, TEST_X, "    assert f('🍎') == 3\n", new) is None
+
+
+def test_V03_CRLF改行のファイルにも同じ判定をする(tmp_path):
+    crlf = BASE_TEST.replace("\n", "\r\n")
+    root = make_repo(tmp_path, {TEST_X: crlf})
+    assert change_edit(root, TEST_X, "    assert f(2) == 3\r\n", "") is not None
+    appended = "        assert True\r\n\r\n\r\ndef test_n():\r\n    assert True\r\n"
+    assert change_edit(root, TEST_X, "        assert True\r\n", appended) is None
+
+
 # --- 実際のスクリプトを標準入力で動かす -----------------------------------------
 
 
