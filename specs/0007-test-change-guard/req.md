@@ -19,7 +19,7 @@
 | 既存の parametrize のリストに、新しい値を足す。元の値は残したまま、リストの末尾に値を足す Edit（既存のケースは変わらない） | 通る | [案→承認] |
 
 ### AC-2 既存テストを、変える・弱める・消すのは、拒否する（人間の承認が要る）
-<!-- 対象: tests/ の既存のテストファイル。Bash 経由の書き換えは、次のラウンド（discussion-log.md）で聞く -->
+<!-- 対象: tests/ の既存のテストファイル（Round 1 の Q5=A: 既存の Python ファイルすべて。conftest.py、補助モジュールを含む）。「既存」の基準は、最後にコミットした内容（HEAD）（Q2=B） -->
 
 | 入力 | 期待される出力 | 出典 |
 | --- | --- | --- |
@@ -27,10 +27,55 @@
 | 既存テストの期待値を変える。assert の右辺、parametrize の値、数字や文字列を変える Edit（例: `== 201` → `== 200`） | 拒否 | [案→承認] |
 | 既存テストに skip / xfail を付ける。`@pytest.mark.skip`、`@pytest.mark.xfail`、`pytest.skip()` を足す Edit | 拒否 | [案→承認] |
 | 既存のテスト関数やファイルを消す、丸ごと置き換える。`def test_…` を消す Edit、既存ファイルを Write で丸ごと置き換える（元の assert が減るもの） | 拒否 | [案→承認] |
+| 既存のテストファイルへの Bash 経由の書き込み。`sed -i`、`>`、`>>`、`mv`、`rm`、python の書き込み（Q3） | 拒否 | [案→承認] |
+| まだ無いテストファイルへの Bash 経由の書き込み（Q3） | 通る | [案→承認] |
+| 新しく足すテストに、skip / xfail、ファイル全体を無効にする `pytestmark` が入っている（Q4） | 拒否 | [案→承認] |
+| 未コミットのテストを、直す（`HEAD` に無いファイル、`HEAD` にある行は変えない）（Q2） | 通る | [案→承認] |
+
+### AC-3 解除のスイッチ（`.claude/ALLOW_TEST_CHANGE`）は、人間だけが置け、1回で消える（Round 1 Q1、Round 2 Q6）
+
+| 入力 | 期待される出力 | 出典 |
+| --- | --- | --- |
+| AI が `.claude/ALLOW_TEST_CHANGE` を作る・触る（Write、Edit、Bash の `touch`、`>`、`cp`、`mv`、`ln`）。UNLOCK があっても | 拒否 | [案→承認] |
+| スイッチがある状態で、守る対象の既存テストを変える Edit | 通る。通した時点で、スイッチが消える | [案→承認] |
+| スイッチが消えたあとで、同じ変更をもう一度 | 拒否 | [案→承認] |
+| スイッチがある状態で、守る対象に触れない呼び出し（例: `git status`、守る対象でないファイルの Edit） | 通る。スイッチは消えない（消えるのは、守る対象への変更が通ったときだけ） | [案→承認] |
+| 通したあとで、その呼び出しが失敗する | スイッチは、消えたまま（hook は、通した時点で消す。呼び出しの成否は見ない） | [案→承認] |
+
+### AC-4 `HEAD` を書き換える・ファイルを別の内容に戻す git 操作は、拒否する（Round 1 Q2、Round 2 Q7）
+
+| 入力 | 期待される出力 | 出典 |
+| --- | --- | --- |
+| 履歴を動かす・書き換える: `git commit --amend`、`git rebase`、`git reset --hard`、`git reset --soft`/`--mixed` に `HEAD` 以外のコミットを渡す | 拒否（パスにかかわらず、常に） | [案→承認] |
+| ファイルを別の内容に戻す: `git checkout <ref> -- <守る対象のパス>`、`git restore <守る対象のパス>`、`git restore --source=<ref> <守る対象のパス>` | 拒否 | [案→承認] |
+| パスが「全部」を指す形: `git restore .`、`git checkout -- .` | 拒否（守る対象に触れるものとして扱う） | [人] |
+| 守る対象でないパスを戻す: `git checkout <ref> -- src/x.py` | 通る | [案→承認] |
+| いつも使う、無害な操作: `git add`、`git commit`、`git checkout <ブランチ>`、`git reset`（引数なし。`add` の取り消し）、`git status`、`git diff` | 通る | [案→承認] |
+
+### AC-5 pytest の設定の変更は、承認が要る（Round 1 Q4、Round 2 Q8）
+
+| 入力 | 期待される出力 | 出典 |
+| --- | --- | --- |
+| `pyproject.toml` の `[tool.pytest.ini_options]` の `addopts` に、`-k "not slow"` を足す | 拒否 | [案→承認] |
+| `conftest.py` に、`collect_ignore = ["test_add_item.py"]` を足す | 拒否 | [案→承認] |
+| `pyproject.toml` の `[tool.ruff]` を変える | 通る（pyproject.toml は、`[tool.pytest.ini_options]` の節だけを、変更の前後で比べる） | [案→承認] |
+| `[tool.pytest.ini_options]` の `testpaths` を、減らす | 拒否 | [案→承認] |
+| `[tool.pytest.ini_options]` に、新しい `markers` の行を足す | 拒否（足す・消す・変えるの区別なく、承認が要る）。`pytest.ini`、`tox.ini`、`setup.cfg` の pytest 節も同じ | [案→承認] |
+
+### AC-6 実装中は、`req.md` の AC の期待値を、黙って変えさせない（Round 1 Q5、Round 2 Q9）
+
+| 入力 | 期待される出力 | 出典 |
+| --- | --- | --- |
+| status が planned / red / green のとき、`specs/*/req.md` の AC の表の、既存の行を変える・消す | 拒否 | [案→承認] |
+| 同じとき、AC の表に、新しい行を足す | 通る | [案→承認] |
+| 同じとき、AC の番号を書き換える | 拒否（行の同一性は、AC 番号をキーにする。番号の書き換えは、削除と追加として扱う） | [人] |
+| status が draft / clarifying / done のとき、AC の表を変える | 通る（仕様を見直すときは、status を clarifying に戻してから編集する） | [案→承認] |
 
 ## やらないこと
 （暫定・要確認）
 - コミット時に、`HEAD` とテストを AST で比べる最終防衛（hook は1枚目。最終防衛は、別の req で）（Q3）
+- `git merge`、`git cherry-pick`、`git apply` による、テストの書き換え。hook では止められないので、最終防衛の別の req で拾う（Q7）
+- Makefile と CI の pytest 呼び出しの扱い（今回に入れるかは、Round 3 の Q10 で決める。CI の設定ファイルは、`.github/**` として、すでに UNLOCK で守られている）
 - status が red のときの動き（今までどおり、`tests/` への書き込みは、すべて拒否）の変更
 - `.claude/hooks/test_guard.py`（保護対象。UNLOCK で守られている）への適用
 - テストの差分を `make check` で調べること（AST で比べる機械チェック）、監査エージェント、mutation のラチェット。別の要望で検討する
@@ -48,4 +93,8 @@
 - （Round 1 回答 Q3=A）既存のテストファイルへの Bash 経由の書き込みは、すべて拒否（`sed -i`、`>`、`>>`、`mv`、`rm`、python の書き込み）。まだ無いファイルへの書き込みは通す。追記は Edit ツールを使う
 - （Round 1 回答 Q4=A）新しく足すテストでも、skip / xfail（ファイル全体を無効にする `pytestmark` を含む）は拒否。条件が付いた: pytest の設定ファイル（`addopts`、`collect_ignore` など）の変更も、承認が要る。対象の範囲は、Round 2 で決める
 - （Round 1 回答 Q5=A）守るのは、`tests/` の下の既存の Python ファイルすべて（`test_*.py`、`conftest.py`、補助モジュール）。Python 以外のデータは、原則として対象外。条件が付いた: **期待値を持つデータ（`req.md` など）も、対象に含める**。範囲は、Round 2 で決める
+- （Round 2 回答 Q6=A）スイッチの「1回」は、ツール呼び出し1回。消えるのは、**守る対象への変更が通ったときだけ**（無関係な呼び出しでは消えない）。通したあとで、その呼び出しが失敗しても、消えたまま
+- （Round 2 回答 Q7=A）履歴を動かす git 操作は、常に拒否。ファイルを戻す操作は、守る対象のパスに触れるときだけ拒否。パスが「全部」を指す形（`git restore .` など）は、守る対象に触れると判定する。`merge`、`cherry-pick`、`apply` は、やらないこと
+- （Round 2 回答 Q8=A）pytest の設定は、足す・消す・変えるの区別なく、承認が要る。`pyproject.toml` は、`[tool.pytest.ini_options]` の節だけを、変更の前後で比べる
+- （Round 2 回答 Q9=A）`req.md` は、実装中（planned / red / green）だけ、AC の表の既存の行の変更・削除を拒否。行を足すのは通す。行の同一性は、AC 番号をキーにする（番号の書き換えは、削除と追加として拒否）
 - 解析しきれないもの（構文エラーなど）は、拒否側に倒す（0004 の Q4 と同じ原則。AI の暫定。違えば指摘してください）
