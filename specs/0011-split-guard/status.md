@@ -2,7 +2,7 @@
 id: 0011
 slug: split-guard
 kind: refactor # feature | chore | refactor（/req-new の最初の質問で決まる。振る舞いが変わらないなら chore か refactor）
-status: green # draft | clarifying | planned | red | green | done
+status: done # draft | clarifying | planned | red | green | done
 size: S0 # 暫定・要確認（kind: refactor は S0）
 risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除のいずれにも該当しない。ただし、hook は、守りの仕組みなので、判定が同一であることを、機械で確かめる）
 ---
@@ -10,7 +10,7 @@ risk: [] # 暫定・要確認（お金・個人情報・認証・データ削除
 # 0011 split-guard の状態
 
 ## いま
-green。G3 待ち: 結果を確認して、done にしてよいか返してください。UNLOCK は、外してかまいません。
+done。G3 確認済み。次は段階2（純粋関数の整備）。比較の道具をリポジトリに入れるかは、段階2の req で決める。
 
 ## 結果
 ### 何を変えたか
