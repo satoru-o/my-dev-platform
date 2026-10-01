@@ -6,3 +6,7 @@ def parse_ids(out: str) -> frozenset[str]:
     return frozenset(
         line for line in out.split("\n") if "::" in line and not line.startswith(" ")
     )
+
+
+def stable_ids(collect_once) -> frozenset[str]:
+    return frozenset()  # スタブ（Red 用。わざと誤った値）
