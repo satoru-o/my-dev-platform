@@ -55,3 +55,48 @@ def test_AC1_作業ブランチの変更を基準との差分として集める(
             head_src="def test_n():\n    assert True\n",
         ),
     ]
+
+
+def test_S01_基準が取れなければツール自身の失敗(tmp_path):
+    make_repo(tmp_path, {"tests/test_a.py": "def test_a():\n    assert True\n"})
+
+    try:
+        gitio.gather_changes(tmp_path, "origin/main")
+    except gitio.ToolError:
+        raised = True
+    else:
+        raised = False
+
+    assert raised
+
+
+def test_S01_削除されたテストは_HEADの内容が無い変更として集める(tmp_path):
+    make_repo(tmp_path, {"tests/test_a.py": "def test_a():\n    assert True\n"})
+    git(tmp_path, "checkout", "-q", "-b", "work")
+    git(tmp_path, "rm", "-q", "tests/test_a.py")
+    git(tmp_path, "commit", "-q", "-m", "rm")
+
+    changes = gitio.gather_changes(tmp_path, "main")
+
+    assert changes == [
+        core.FileChange(
+            path="tests/test_a.py",
+            base_src="def test_a():\n    assert True\n",
+            head_src=None,
+        )
+    ]
+
+
+def test_X03_危険な文字列を含むパスも_実行されず_パスのまま扱う(tmp_path):
+    make_repo(tmp_path, {"docs/a.md": "# a\n"})
+    git(tmp_path, "checkout", "-q", "-b", "work")
+    evil = ".github/$(touch pwned); rm -rf x.yml"
+    (tmp_path / evil).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / evil).write_text("a\n")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-q", "-m", "evil")
+
+    changes = gitio.gather_changes(tmp_path, "main")
+
+    assert [c.path for c in changes] == [evil]
+    assert not (tmp_path / "pwned").exists()
