@@ -67,3 +67,15 @@ def test_AC1_pytestの設定を変えると赤():
 
     assert report.verdict == "red"
     assert [f.path for f in report.findings] == ["pyproject.toml"]
+
+
+def test_AC3_基準にあったテストIDが無くなったら赤():
+    report = core.check(
+        changes=[],
+        base_ids=frozenset({"tests/test_a.py::test_a", "tests/test_a.py::test_b"}),
+        head_ids=frozenset({"tests/test_a.py::test_a"}),
+        labels=frozenset(),
+    )
+
+    assert report.verdict == "red"
+    assert [f.path for f in report.findings] == ["tests/test_a.py::test_b"]
