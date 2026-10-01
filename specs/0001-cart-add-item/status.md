@@ -1,7 +1,7 @@
 ---
 id: 0001
 slug: cart-add-item
-status: clarifying # draft | clarifying | planned | red | green | done
+status: planned # draft | clarifying | planned | red | green | done
 size: S1 # AI暫定・要確認
 risk: [] # 価格計算は範囲外のため、リスクタグなし（AI暫定・要確認）
 ---
@@ -9,7 +9,7 @@ risk: [] # 価格計算は範囲外のため、リスクタグなし（AI暫定�
 # 0001 cart-add-item の状態
 
 ## いま
-FB 2（mutation 実験で見つかったテストの穴、エラーの code の契約）で、done から戻した。G1待ち。`discussion-log.md` の Round 3（Q9〜Q12）に回答してください。未回答は推奨で進みます。
+FB 2（mutation 実験で見つかったテストの穴、エラーの code の契約）に対応中（planned）。Round 3 は回答済み（すべて A）。AC-3〜5 と `code` の契約を、テストで1件ずつ足している。
 
 ## 結果
 （done時に人間が確認して確定）
