@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 # 0011（guard.py を分ける）の開始時点。guard.py が1193行の版
-BASELINE = "55adc1b92167f2d3441eaf00b252365aef3e6a1b"
+BASELINE = "55adc1b92167f2d3441eaf00b252365aef3e6a1b"  # pragma: allowlist secret
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
