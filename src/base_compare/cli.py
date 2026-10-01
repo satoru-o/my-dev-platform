@@ -12,4 +12,7 @@ def run(repo, base_ref, labels, mode, collect_ids):
         head_ids=collect_ids("head"),
         labels=labels,
     )
-    return (0 if result.verdict == "green" else 1), report.render(result)
+    text = report.render(result)
+    if mode == "local":
+        return 0, f"警告（ローカルでは失敗にしない。承認の正本は CI のラベル）\n{text}"
+    return (0 if result.verdict == "green" else 1), text
